@@ -1,47 +1,30 @@
-# @coll-front/ipc-module
+# electron-ipc-module
 
-`@coll-front/ipc-module` fournit une petite couche d'abstraction pour organiser l'IPC Electron dans le process `main`, typer les canaux et generer un bridge `preload` automatiquement a partir des modules IPC du projet.
+Modular, type-safe IPC for Electron. Declare handlers in the main process, load them with lifecycle management, and auto-generate a typed preload bridge for the renderer.
 
-Le package expose deux points d'entree :
+## Features
 
-- `@coll-front/ipc-module` : helpers runtime pour declarer et charger des modules IPC.
-- `@coll-front/ipc-module/rollup-plugin` : plugin Rollup qui analyse les fichiers `*.ipc.ts` et genere un bridge type pour le renderer.
+- Compact API for `ipcMain.handle`, `handleOnce`, `on`, and `once`
+- Automatic channel prefixing (`profile:get`, `profile:save`, …)
+- Typed renderer events via `reply`, `sender.send`, and `senderFrame.send`
+- Container to load, unload, and observe multiple IPC modules
+- Rollup plugin that generates a typed `ipcRenderer` bridge from `*.ipc.ts` files
 
-## Ce que le package apporte
+## Installation
 
-- Une declaration compacte des canaux `ipcMain.handle`, `ipcMain.handleOnce`, `ipcMain.on` et `ipcMain.once`.
-- Un prefixage automatique des noms de canaux.
-- Un typage des evenements emis vers le renderer via `reply` et `sender.send`.
-- Un conteneur pour charger, decharger et observer plusieurs modules IPC.
-- Une generation automatique d'un bridge `ipcRenderer` pour le `preload`.
+```bash
+npm install electron-ipc-module
+```
 
-## Prerequis
+**Peer dependency:** `electron >= 40`
 
-- `electron >= 40`
-- TypeScript
+## Quick start
 
-## Export principal
-
-L'export racine expose notamment :
-
-- `defineIpcModule`
-- `createIpcHelpers`
-- `handle`, `handleOnce`, `listen`, `listenOnce`
-- `createIpcContainer`
-- `TypedWebContents`
-- `TypedWebFrameMain`
-- `TypedIpcMainEvent`
-- `TypedIpcMainInvokeEvent`
-
-## Declarer un module IPC
-
-Un module IPC est une fonction qui enregistre une liste de canaux sur `ipcMain` et retourne leurs callbacks de nettoyage.
+### 1. Define an IPC module
 
 ```ts
-import {
-  createIpcHelpers,
-  defineIpcModule,
-} from "@coll-front/ipc-module";
+// main/ipc/profile.ipc.ts
+import { createIpcHelpers, defineIpcModule } from "electron-ipc-module";
 
 type ProfileEvents = {
   "profile-updated": [profile: { id: string; name: string }];
@@ -49,14 +32,7 @@ type ProfileEvents = {
 
 const { handle, listen } = createIpcHelpers<ProfileEvents>();
 
-export function createProfileIpc(service: {
-  get(id: string): Promise<{ id: string; name: string } | null>;
-  save(input: { id: string; name: string }): Promise<{
-    id: string;
-    name: string;
-  }>;
-  openEditor(): void;
-}) {
+export function createProfileIpc(service: ProfileService) {
   return defineIpcModule("profile", {
     get: handle((_event, id: string) => service.get(id)),
 
@@ -73,143 +49,30 @@ export function createProfileIpc(service: {
 }
 ```
 
-Le code ci-dessus enregistre les canaux suivants :
+This registers:
 
-- `profile:get`
-- `profile:save`
-- `profile:open-editor`
+- `profile:get` → `ipcRenderer.invoke`
+- `profile:save` → `ipcRenderer.invoke`
+- `profile:open-editor` → `ipcRenderer.send`
 
-### `handle` vs `listen`
-
-- `handle` et `handleOnce` s'appuient sur `ipcMain.handle` et `ipcMain.handleOnce`.
-- `listen` et `listenOnce` s'appuient sur `ipcMain.on` et `ipcMain.once`.
-
-En pratique :
-
-- un canal `handle` est consomme cote renderer via `ipcRenderer.invoke(...)`
-- un canal `listen` est consomme cote renderer via `ipcRenderer.send(...)`
-
-### Prefixage des canaux
-
-`defineIpcModule(prefix, channels)` construit chaque nom de canal sous la forme :
-
-```txt
-${prefix}:${key}
-```
-
-Si `prefix` est vide, la cle est utilisee telle quelle.
-
-## Typage des evenements emis vers le renderer
-
-`createIpcHelpers<TEmit>()` sert aussi a typer :
-
-- `event.reply(...)`
-- `event.sender.send(...)`
-- `event.senderFrame?.send(...)`
-
-Exemple :
+### 2. Load modules in main
 
 ```ts
-type RuntimeEvents = {
-  "startup-complete": [payload: { redirectTo: string }];
-  "startup-error": [payload: { message: string }];
-};
+import { createIpcContainer } from "electron-ipc-module";
+import { createProfileIpc } from "./ipc/profile.ipc.js";
 
-const { handle, listen } = createIpcHelpers<RuntimeEvents>();
+const ipc = createIpcContainer();
 
-const getStatus = handle(async (event) => {
-  try {
-    event.sender.send("startup-complete", {
-      redirectTo: "/home",
-    });
-  } catch {
-    event.sender.send("startup-error", {
-      message: "Echec du demarrage",
-    });
-  }
-});
-
-const runStartup = listen((event) => {
-  event.reply("startup-complete", {
-    redirectTo: "/home",
-  });
-});
-```
-
-Important : le type `TEmit` decrit les canaux emis manuellement vers le renderer. Ces evenements ne sont pas prefixes automatiquement par `defineIpcModule`.
-
-## Hook `ready` et nettoyage
-
-`defineIpcModule` accepte un troisieme argument optionnel :
-
-```ts
-defineIpcModule(prefix, channels, {
-  ready: async (ipc) => {
-    // logique executee une fois les canaux enregistres
-    return () => {
-      // nettoyage optionnel lors du dechargement du module
-    };
-  },
-});
-```
-
-Points utiles :
-
-- `ready` est appele apres l'enregistrement des canaux.
-- si `ready` echoue, les canaux deja enregistres sont retires automatiquement.
-- la fonction retournee par `ready` devient le nettoyage du module.
-
-## Charger plusieurs modules avec `createIpcContainer`
-
-Le conteneur permet de piloter le cycle de vie de plusieurs modules IPC.
-
-```ts
-import { createIpcContainer } from "@coll-front/ipc-module";
-import { createProfileIpc } from "./profile.ipc.js";
-import { createSettingsIpc } from "./settings.ipc.js";
-
-const ipcContainer = createIpcContainer();
-
-await ipcContainer.loadAll({
+await ipc.loadAll({
   profile: createProfileIpc(profileService),
-  settings: createSettingsIpc(settingsService),
-});
-
-ipcContainer.on("loaded", (name, channels) => {
-  console.log("module charge", name, channels);
-});
-
-ipcContainer.on("error", (name, error) => {
-  console.error("echec de chargement", name, error);
 });
 ```
 
-API utile du conteneur :
-
-- `load(name, register, ipc?)`
-- `loadAll(entries, ipc?)`
-- `unload(name)`
-- `unloadAll()`
-- `has(name)`
-- `getChannels(name)`
-- `names`
-- `allChannels`
-- `size`
-- evenements `loaded`, `unloaded` et `error`
-
-Comportement notable :
-
-- si un module portant le meme nom est recharge, l'ancienne version est dechargee avant d'etre remplacee
-- `unload(name)` execute le nettoyage de chaque canal puis le nettoyage du module
-
-## Plugin Rollup : generation du bridge preload
-
-Le sous-chemin `@coll-front/ipc-module/rollup-plugin` expose un plugin Rollup qui analyse les fichiers `*.ipc.ts` et genere un objet `bridge` type pour le renderer.
-
-### Configuration minimale
+### 3. Generate the preload bridge
 
 ```js
-import ipcBridge from "@coll-front/ipc-module/rollup-plugin";
+// rollup.config.js
+import ipcBridge from "electron-ipc-module/rollup-plugin";
 
 export default {
   plugins: [
@@ -222,44 +85,7 @@ export default {
 };
 ```
 
-Options disponibles :
-
-- `ipcDir` : dossier ou glob a analyser. Par defaut `./src/ipc`.
-- `outFile` : fichier TypeScript genere. Par defaut `./src/generated/ipc-bridge.ts`.
-- `tsconfig` : fichier `tsconfig` utilise pour l'analyse. Par defaut `./tsconfig.json`.
-
-### Ce que le plugin genere
-
-Pour un fichier `profile.ipc.ts` contenant :
-
-```ts
-return defineIpcModule("profile", {
-  get: handle((_event, id: string) => service.get(id)),
-  "open-editor": listen(() => service.openEditor()),
-});
-```
-
-le bridge genere expose des methodes proches de :
-
-```ts
-bridge.profile.get(id);
-bridge.profile.openEditor();
-```
-
-Conventions de nommage :
-
-- le nom du module vient du nom du fichier `*.ipc.ts`
-- les noms de modules sont convertis en `camelCase`
-- les cles de canaux sont converties en `camelCase`
-- les evenements emis generent `onXxx(...)` et `onceXxx(...)`
-
-Exemples :
-
-- `config.ipc.ts` -> `bridge.config`
-- canal `"get-all"` -> `bridge.config.getAll()`
-- evenement `"config-updated"` -> `bridge.config.onConfigUpdated(...)`
-
-### Exemple de preload
+### 4. Expose the bridge in preload
 
 ```ts
 import { contextBridge } from "electron";
@@ -268,26 +94,85 @@ import { bridge } from "./generated/ipc-bridge";
 contextBridge.exposeInMainWorld("ipc", bridge);
 ```
 
-### Limitations de l'analyse
+### 5. Call from the renderer
 
-Le plugin repose sur une analyse statique TypeScript. Pour obtenir un bridge propre et previsible :
+```ts
+const profile = await window.ipc.profile.get("abc-123");
+window.ipc.profile.onProfileUpdated((profile) => {
+  console.log("updated", profile);
+});
+```
 
-- utilisez des fichiers suffixes en `*.ipc.ts`
-- privilegiez un objet litteral simple dans `defineIpcModule(...)`
-- evitez les `spread` dans l'objet des canaux si vous voulez un typage complet dans le bridge
+## API
 
-## Exemple de flux complet
+### Runtime (`electron-ipc-module`)
 
-1. Le process `main` declare un fichier `main/ipc/profile.ipc.ts`.
-2. Ce fichier retourne `defineIpcModule(...)`.
-3. Le conteneur charge ce module au demarrage.
-4. Le plugin Rollup genere `main/generated/ipc-bridge.ts`.
-5. Le `preload` expose `bridge` via `contextBridge`.
-6. Le renderer appelle `window.ipc.profile.get(...)` ou s'abonne a `window.ipc.profile.onProfileUpdated(...)`.
+| Export | Description |
+| --- | --- |
+| `defineIpcModule(prefix, channels, options?)` | Register a group of IPC channels |
+| `createIpcHelpers<TEmit>()` | Create typed `handle` / `listen` helpers |
+| `handle`, `handleOnce`, `listen`, `listenOnce` | Default untyped helpers |
+| `createIpcContainer()` | Load, unload, and observe IPC modules |
 
-## Structure recommandee
+**Typed events.** Pass an event map to `createIpcHelpers<TEmit>()` to type `event.reply`, `event.sender.send`, and `event.senderFrame?.send`. Emitted events are **not** prefixed by `defineIpcModule`.
 
-```txt
+**Cleanup.** `defineIpcModule` accepts an optional `ready` hook. If registration fails, already-registered channels are rolled back automatically.
+
+```ts
+defineIpcModule("profile", channels, {
+  ready: async (ipc) => {
+    return () => {
+      // optional module cleanup on unload
+    };
+  },
+});
+```
+
+**Container.**
+
+```ts
+const ipc = createIpcContainer();
+
+await ipc.load("profile", createProfileIpc(service));
+await ipc.loadAll({ profile, settings });
+
+ipc.on("loaded", (name, channels) => {});
+ipc.on("unloaded", (name) => {});
+ipc.on("error", (name, error) => {});
+
+ipc.unload("profile");
+ipc.unloadAll();
+```
+
+Reloading a module with the same name unloads the previous version first.
+
+### Rollup plugin (`electron-ipc-module/rollup-plugin`)
+
+Analyzes `*.ipc.ts` files and generates a typed bridge for the renderer.
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `ipcDir` | `./src/ipc` | Directory or glob of IPC module files |
+| `outFile` | `./src/generated/ipc-bridge.ts` | Generated TypeScript output |
+| `tsconfig` | `./tsconfig.json` | TypeScript config used for static analysis |
+
+**Naming conventions**
+
+| Source | Generated API |
+| --- | --- |
+| `profile.ipc.ts` | `bridge.profile` |
+| channel `"get-all"` | `bridge.profile.getAll()` |
+| event `"profile-updated"` | `bridge.profile.onProfileUpdated(...)` |
+
+**Static analysis tips**
+
+- Use `*.ipc.ts` file names
+- Prefer a plain object literal in `defineIpcModule(...)`
+- Avoid spreads in the channels object for complete bridge typing
+
+## Recommended layout
+
+```
 main/
   ipc/
     profile.ipc.ts
@@ -297,11 +182,6 @@ main/
   preload.ts
 ```
 
-## Resume
+## License
 
-Utilisez ce package si vous voulez :
-
-- structurer l'IPC Electron par modules
-- garder un typage fort entre `main` et `renderer`
-- centraliser le chargement et le dechargement des canaux
-- generer automatiquement un bridge `preload` a partir du code source
+MIT © [Adel Terki](LICENSE)
