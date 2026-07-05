@@ -2,8 +2,8 @@ import type {
   AnalyzedIpcModule,
   ChannelInfo,
   EmittedEventInfo,
-} from "./types.js";
-import { toCamelCase, toPascalCase } from "./utils.js";
+} from "../shared/types/bridge.js";
+import { toCamelCase, toPascalCase } from "../shared/utils.js";
 
 function generateImportLine(hasEmittedEvents: boolean) {
   return hasEmittedEvents

@@ -1,21 +1,43 @@
 {
   "name": "electron-ipc-module",
+  "version": "0.1.0",
+  "description": "Modular, type-safe Electron IPC with auto-generated preload bridges",
+  "author": "Adel Terki",
   "license": "MIT",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/antelm-dev/electron-ipc-module.git"
+  },
+  "bugs": "https://github.com/antelm-dev/electron-ipc-module/issues",
+  "homepage": "https://github.com/antelm-dev/electron-ipc-module#readme",
+  "keywords": [
+    "electron",
+    "ipc",
+    "typescript",
+    "preload",
+    "rollup",
+    "main-process",
+    "context-bridge"
+  ],
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "exports": {
     ".": "./dist/index.js",
-    "./rollup-plugin": "./dist/rollup-ipc-bridge.js",
-    "./vite-plugin": "./dist/vite-ipc-bridge.js"
+    "./rollup-plugin": "./dist/rollup-plugin.js"
   },
   "scripts": {
     "build": "tsc --build",
     "typecheck": "tsc --build --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "prepublishOnly": "pnpm run build && pnpm run test"
   },
   "dependencies": {
-    "glob": "^11.0.3",
-    "typescript": "^5.8.3"
+    "glob": "^11.0.3"
   },
   "peerDependencies": {
     "electron": ">=40.0.0"
@@ -24,6 +46,7 @@
     "@types/node": "^22.8.6",
     "electron": "^40.8.0",
     "rollup": "^4.17.2",
+    "typescript": "^5.8.3",
     "vite": "^7.3.6",
     "vitest": "^4.1.9"
   }

@@ -2,9 +2,9 @@ import type { Plugin } from "rollup";
 import {
   runIpcBridgeGeneration,
   type IpcBridgeOptions,
-} from "./ipc-bridge.js";
+} from "./bridge/ipc-bridge.js";
 
-export type { IpcBridgeOptions } from "./ipc-bridge.js";
+export type { IpcBridgeOptions } from "./bridge/ipc-bridge.js";
 
 export default function ipcBridge(options: IpcBridgeOptions = {}): Plugin {
   return {

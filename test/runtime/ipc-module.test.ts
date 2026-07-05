@@ -1,4 +1,10 @@
-import { defineIpcModule, handle, listenOnce } from './ipc-module.js';
+import {
+  defineIpcModule,
+  handle,
+  handleOnce,
+  listen,
+  listenOnce,
+} from '../../src/runtime/ipc-module.js';
 import { vi, describe, it, expect } from 'vitest';
 
 const createIpc = () => {
@@ -89,5 +95,45 @@ describe('defineIpcModule', () => {
       'demo:notify',
       expect.any(Function),
     );
+  });
+
+  it('registers handleOnce and listen with the expected ipcMain methods', async () => {
+    const { ipc } = createIpc();
+
+    const register = defineIpcModule('app', {
+      once: handleOnce(async () => 'once'),
+      notify: listen(() => undefined),
+    });
+
+    const registration = await register(ipc as never);
+
+    expect(ipc.handleOnce).toHaveBeenCalledWith('app:once', expect.any(Function));
+    expect(ipc.on).toHaveBeenCalledWith('app:notify', expect.any(Function));
+    expect(registration.channels.map(([channel]) => channel)).toEqual([
+      'app:once',
+      'app:notify',
+    ]);
+  });
+
+  it('uses unprefixed channel names when prefix is empty', async () => {
+    const { ipc } = createIpc();
+
+    await defineIpcModule('', {
+      ping: handle(async () => 'pong'),
+    })(ipc as never);
+
+    expect(ipc.handle).toHaveBeenCalledWith('ping', expect.any(Function));
+  });
+
+  it('registers handlers that can be invoked with args and return values', async () => {
+    const { ipc, handlers } = createIpc();
+
+    await defineIpcModule('math', {
+      add: handle(async (_event, a: number, b: number) => a + b),
+    })(ipc as never);
+
+    const handler = handlers.get('math:add');
+    expect(handler).toBeTypeOf('function');
+    expect(await handler?.({} as never, 2, 3)).toBe(5);
   });
 });

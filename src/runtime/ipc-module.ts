@@ -9,7 +9,7 @@ import type {
   IpcModuleCleanup,
   IpcModuleRegistration,
   MaybePromise,
-} from './types.js';
+} from '../shared/types/runtime.js';
 
 export type {
   IpcEventMap,
@@ -23,7 +23,7 @@ export type {
   IpcModuleCleanup,
   IpcModuleRegistration,
   IpcModuleRegister,
-} from './types.js';
+} from '../shared/types/runtime.js';
 
 export function defineChannel<
   T extends ChannelType,

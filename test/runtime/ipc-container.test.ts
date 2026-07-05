@@ -5,8 +5,8 @@ vi.mock('electron', () => ({
   ipcMain: {},
 }));
 
-import { createIpcContainer } from './ipc-container.js';
-import type { IpcCleanup, IpcModuleRegister } from './ipc-module.js';
+import { createIpcContainer } from '../../src/runtime/ipc-container.js';
+import type { IpcCleanup, IpcModuleRegister } from '../../src/runtime/ipc-module.js';
 
 const fakeRegister =
   (channels: string[]): IpcModuleRegister =>

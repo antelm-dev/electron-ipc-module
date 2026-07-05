@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 
-export type { MethodsOnly, MaybePromise, LoggerLike } from "./types.js";
+export type { MethodsOnly, MaybePromise, LoggerLike } from "./types/runtime.js";
 
 export const DEFAULT_IPC_DIR = "./src/ipc";
 export const DEFAULT_OUT_FILE = "./src/generated/ipc-bridge.ts";

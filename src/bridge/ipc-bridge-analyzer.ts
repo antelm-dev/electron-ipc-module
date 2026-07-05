@@ -10,9 +10,9 @@ import {
   isCallToIdentifier,
   serializeType,
   unwrapAwaitedType,
-} from "./ts-utils.js";
-import type { AnalyzedIpcModule, ChannelInfo, EmittedEventInfo } from "./types.js";
-import { resolveIpcPattern, toPosixPath } from "./utils.js";
+} from "../shared/ts-utils.js";
+import type { AnalyzedIpcModule, ChannelInfo, EmittedEventInfo } from "../shared/types/bridge.js";
+import { resolveIpcPattern, toPosixPath } from "../shared/utils.js";
 
 function collectMatchedIpcFiles(ipcDir: string): Set<string> {
   const pattern = resolveIpcPattern(ipcDir);

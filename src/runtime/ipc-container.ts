@@ -5,9 +5,9 @@ import type {
   IpcContainerEmitter,
   IpcModuleRegister,
   IpcModuleRegistration,
-} from './types.js';
+} from '../shared/types/runtime.js';
 
-export type { IpcContainerEmitter } from './types.js';
+export type { IpcContainerEmitter } from '../shared/types/runtime.js';
 
 export function createIpcContainer() {
   const modules = new Map<string, IpcModuleRegistration>();

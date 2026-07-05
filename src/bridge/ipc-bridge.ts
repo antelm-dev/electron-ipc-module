@@ -5,8 +5,8 @@ import { globSync } from "glob";
 
 import { extractModules } from "./ipc-bridge-analyzer.js";
 import { generateBridge } from "./ipc-bridge-generator.js";
-import { createTsProgram, makeRelativeImports } from "./ts-utils.js";
-import type { IpcBridgeOptions, ResolvedIpcBridgeOptions } from "./types.js";
+import { createTsProgram, makeRelativeImports } from "../shared/ts-utils.js";
+import type { IpcBridgeOptions, ResolvedIpcBridgeOptions } from "../shared/types/bridge.js";
 import {
   createLogger,
   DEFAULT_IPC_DIR,
@@ -16,9 +16,9 @@ import {
   resolveIpcPattern,
   toAbsolutePosix,
   toPosixPath,
-} from "./utils.js";
+} from "../shared/utils.js";
 
-export type { IpcBridgeOptions } from "./types.js";
+export type { IpcBridgeOptions } from "../shared/types/bridge.js";
 
 const logger = createLogger("ipc-bridge");
 

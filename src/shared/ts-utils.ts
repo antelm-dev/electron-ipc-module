@@ -3,7 +3,7 @@ import { dirname, relative, resolve } from "node:path";
 
 import ts from "typescript";
 
-import type { EmittedEventInfo } from "./types.js";
+import type { EmittedEventInfo } from "./types/bridge.js";
 
 export const SERIALIZE_FLAGS =
   ts.TypeFormatFlags.NoTruncation | ts.TypeFormatFlags.UseFullyQualifiedType;
