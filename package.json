@@ -1,5 +1,6 @@
 {
   "name": "electron-ipc-module",
+  "license": "MIT",
   "type": "module",
   "exports": {
     ".": "./dist/index.js",
