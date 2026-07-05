@@ -1,11 +1,10 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from "vitest";
 
-import { generateBridge } from '../../src/bridge/ipc-bridge-generator.js';
-import type { AnalyzedIpcModule } from '../../src/shared/types/bridge.js';
+import { generateBridge } from "../../src/bridge/ipc-bridge-generator.js";
+import type { AnalyzedIpcModule } from "../../src/shared/types/bridge.js";
 
 const moduleFixture = (
-  overrides: Partial<AnalyzedIpcModule> &
-    Pick<AnalyzedIpcModule, 'name' | 'channels'>,
+  overrides: Partial<AnalyzedIpcModule> & Pick<AnalyzedIpcModule, "name" | "channels">,
 ): AnalyzedIpcModule => ({
   prefix: overrides.prefix ?? overrides.name,
   emittedEvents: [],
@@ -14,50 +13,46 @@ const moduleFixture = (
   ...overrides,
 });
 
-describe('generateBridge', () => {
-  it('generates invoke for handlers and send for listeners', () => {
+describe("generateBridge", () => {
+  it("generates invoke for handlers and send for listeners", () => {
     const code = generateBridge([
       moduleFixture({
-        name: 'app',
-        prefix: 'app',
+        name: "app",
+        prefix: "app",
         channels: [
           {
-            key: 'ping',
+            key: "ping",
             isHandler: true,
             argsType: null,
-            returnType: 'string',
+            returnType: "string",
           },
           {
-            key: 'notify',
+            key: "notify",
             isHandler: false,
             argsType: null,
-            returnType: 'any',
+            returnType: "any",
           },
         ],
       }),
     ]);
 
     expect(code).toContain("import { ipcRenderer } from 'electron';");
-    expect(code).not.toContain('IpcRendererEvent');
-    expect(code).toContain(
-      'ping: (): Promise<string> => ipcRenderer.invoke("app:ping")',
-    );
-    expect(code).toContain(
-      'notify: (): void => ipcRenderer.send("app:notify")',
-    );
+    expect(code).not.toContain("IpcRendererEvent");
+    expect(code).toContain('ping: (): Promise<string> => ipcRenderer.invoke("app:ping")');
+    expect(code).toContain('notify: (): void => ipcRenderer.send("app:notify")');
   });
 
-  it('includes typed args and Promise return annotations for handlers', () => {
+  it("includes typed args and Promise return annotations for handlers", () => {
     const code = generateBridge([
       moduleFixture({
-        name: 'math',
-        prefix: 'math',
+        name: "math",
+        prefix: "math",
         channels: [
           {
-            key: 'add',
+            key: "add",
             isHandler: true,
-            argsType: '[a: number, b: number]',
-            returnType: 'number',
+            argsType: "[a: number, b: number]",
+            returnType: "number",
           },
         ],
       }),
@@ -68,23 +63,19 @@ describe('generateBridge', () => {
     );
   });
 
-  it('generates event listener helpers when modules emit events', () => {
+  it("generates event listener helpers when modules emit events", () => {
     const code = generateBridge([
       moduleFixture({
-        name: 'events',
-        prefix: 'events',
+        name: "events",
+        prefix: "events",
         channels: [],
-        emittedEvents: [
-          { key: 'profile-updated', argsType: '[id: string, name: string]' },
-        ],
+        emittedEvents: [{ key: "profile-updated", argsType: "[id: string, name: string]" }],
       }),
     ]);
 
-    expect(code).toContain(
-      "import { ipcRenderer, type IpcRendererEvent } from 'electron';",
-    );
-    expect(code).toContain('function createOnHelper');
-    expect(code).toContain('function createOnceHelper');
+    expect(code).toContain("import { ipcRenderer, type IpcRendererEvent } from 'electron';");
+    expect(code).toContain("function createOnHelper");
+    expect(code).toContain("function createOnceHelper");
     expect(code).toContain(
       'onProfileUpdated: (listener: (...args: [id: string, name: string]) => void): Unsubscribe => createOnHelper<[id: string, name: string]>("profile-updated", listener)',
     );
@@ -93,40 +84,40 @@ describe('generateBridge', () => {
     );
   });
 
-  it('converts kebab-case channel and event keys', () => {
+  it("converts kebab-case channel and event keys", () => {
     const code = generateBridge([
       moduleFixture({
-        name: 'user-profile',
-        prefix: 'user-profile',
+        name: "user-profile",
+        prefix: "user-profile",
         channels: [
           {
-            key: 'get-all',
+            key: "get-all",
             isHandler: true,
             argsType: null,
-            returnType: 'string[]',
+            returnType: "string[]",
           },
         ],
-        emittedEvents: [{ key: 'profile-updated', argsType: null }],
+        emittedEvents: [{ key: "profile-updated", argsType: null }],
       }),
     ]);
 
-    expect(code).toContain('userProfile: {');
-    expect(code).toContain('getAll:');
-    expect(code).toContain('onProfileUpdated');
-    expect(code).toContain('onceProfileUpdated');
+    expect(code).toContain("userProfile: {");
+    expect(code).toContain("getAll:");
+    expect(code).toContain("onProfileUpdated");
+    expect(code).toContain("onceProfileUpdated");
   });
 
-  it('uses unprefixed channel names when prefix is empty', () => {
+  it("uses unprefixed channel names when prefix is empty", () => {
     const code = generateBridge([
       moduleFixture({
-        name: 'root',
-        prefix: '',
+        name: "root",
+        prefix: "",
         channels: [
           {
-            key: 'ping',
+            key: "ping",
             isHandler: true,
             argsType: null,
-            returnType: 'string',
+            returnType: "string",
           },
         ],
       }),

@@ -24,10 +24,7 @@ function collectMatchedIpcFiles(ipcDir: string): Set<string> {
   );
 }
 
-function isAnalyzableIpcFile(
-  fileName: string,
-  matchedFiles: Set<string>,
-): boolean {
+function isAnalyzableIpcFile(fileName: string, matchedFiles: Set<string>): boolean {
   if (!matchedFiles.has(fileName)) return false;
   if (!fileName.endsWith(".ipc.ts")) return false;
   if (fileName.includes(".test.")) return false;
@@ -40,9 +37,7 @@ function collectSpreadWarnings(channelsArg: ts.Node): string[] {
   const warnings: string[] = [];
   for (const property of channelsArg.properties) {
     if (ts.isSpreadAssignment(property)) {
-      warnings.push(
-        "Spread in channels object - those entries cannot be typed in the bridge",
-      );
+      warnings.push("Spread in channels object - those entries cannot be typed in the bridge");
     }
   }
   return warnings;
@@ -50,9 +45,7 @@ function collectSpreadWarnings(channelsArg: ts.Node): string[] {
 
 function isOptionalParameter(declarationNode: ts.Declaration | undefined): boolean {
   if (!declarationNode || !ts.isParameter(declarationNode)) return false;
-  return (
-    Boolean(declarationNode.questionToken) || Boolean(declarationNode.initializer)
-  );
+  return Boolean(declarationNode.questionToken) || Boolean(declarationNode.initializer);
 }
 
 function serializeRestArgsType(
@@ -74,10 +67,7 @@ function serializeNamedArgsType(
   for (let index = 1; index < params.length; index += 1) {
     const param = params[index];
     const declarationNode = param.valueDeclaration;
-    const paramType = checker.getTypeOfSymbolAtLocation(
-      param,
-      declarationNode || channelsArg,
-    );
+    const paramType = checker.getTypeOfSymbolAtLocation(param, declarationNode || channelsArg);
     const typeString = serializeType(checker, paramType);
     const optional = isOptionalParameter(declarationNode);
     parts.push(`${param.getName()}${optional ? "?" : ""}: ${typeString}`);
@@ -95,10 +85,7 @@ function serializeArgsType(
 
   const restParam = params[1];
   const declaration = restParam.valueDeclaration;
-  const isRest =
-    declaration &&
-    ts.isParameter(declaration) &&
-    Boolean(declaration.dotDotDotToken);
+  const isRest = declaration && ts.isParameter(declaration) && Boolean(declaration.dotDotDotToken);
 
   if (isRest) {
     return serializeRestArgsType(checker, restParam, declaration);
@@ -183,20 +170,11 @@ function collectHelpersEmittedEvents(
     for (const declaration of statement.declarationList.declarations) {
       if (!declaration.initializer) continue;
 
-      const helpersCall = getCallToIdentifier(
-        declaration.initializer,
-        "createIpcHelpers",
-      );
+      const helpersCall = getCallToIdentifier(declaration.initializer, "createIpcHelpers");
       const eventMapNode = helpersCall?.typeArguments?.[0];
       if (!eventMapNode) continue;
 
-      collectEmittedEvents(
-        checker,
-        eventMapNode,
-        emittedEvents,
-        seenEmittedEvents,
-        warnings,
-      );
+      collectEmittedEvents(checker, eventMapNode, emittedEvents, seenEmittedEvents, warnings);
     }
   }
 }
@@ -204,9 +182,7 @@ function collectHelpersEmittedEvents(
 function isExportedVariableStatement(statement: ts.Statement): statement is ts.VariableStatement {
   if (!ts.isVariableStatement(statement)) return false;
   return Boolean(
-    ts
-      .getModifiers(statement)
-      ?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword),
+    ts.getModifiers(statement)?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword),
   );
 }
 
@@ -221,13 +197,7 @@ function collectDefineIpcEventsFromDeclaration(
   if (!ts.isIdentifier(declaration.name)) return;
   if (!isCallToIdentifier(declaration.initializer, "defineIpcEvents")) return;
 
-  collectEmittedEvents(
-    checker,
-    declaration.name,
-    emittedEvents,
-    seenEmittedEvents,
-    warnings,
-  );
+  collectEmittedEvents(checker, declaration.name, emittedEvents, seenEmittedEvents, warnings);
 }
 
 function collectExportedDefineIpcEvents(
@@ -269,20 +239,8 @@ function analyzeIpcSourceFile(
   const emittedEvents: EmittedEventInfo[] = [];
   const seenEmittedEvents = new Set<string>();
 
-  collectHelpersEmittedEvents(
-    checker,
-    sourceFile,
-    emittedEvents,
-    seenEmittedEvents,
-    warnings,
-  );
-  collectExportedDefineIpcEvents(
-    checker,
-    sourceFile,
-    emittedEvents,
-    seenEmittedEvents,
-    warnings,
-  );
+  collectHelpersEmittedEvents(checker, sourceFile, emittedEvents, seenEmittedEvents, warnings);
+  collectExportedDefineIpcEvents(checker, sourceFile, emittedEvents, seenEmittedEvents, warnings);
 
   const fileName = toPosixPath(resolve(sourceFile.fileName));
   return {
@@ -295,10 +253,7 @@ function analyzeIpcSourceFile(
   };
 }
 
-export function extractModules(
-  program: ts.Program,
-  ipcDir: string,
-): AnalyzedIpcModule[] {
+export function extractModules(program: ts.Program, ipcDir: string): AnalyzedIpcModule[] {
   const checker = program.getTypeChecker();
   const matchedFiles = collectMatchedIpcFiles(ipcDir);
   const modules: AnalyzedIpcModule[] = [];

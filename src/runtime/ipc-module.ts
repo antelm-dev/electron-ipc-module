@@ -1,4 +1,4 @@
-import { ipcMain, type IpcMain } from 'electron';
+import { ipcMain, type IpcMain } from "electron";
 
 import type {
   ChannelDef,
@@ -9,7 +9,7 @@ import type {
   IpcModuleCleanup,
   IpcModuleRegistration,
   MaybePromise,
-} from '../shared/types/runtime.js';
+} from "../shared/types/runtime.js";
 
 export type {
   IpcEventMap,
@@ -23,7 +23,7 @@ export type {
   IpcModuleCleanup,
   IpcModuleRegistration,
   IpcModuleRegister,
-} from '../shared/types/runtime.js';
+} from "../shared/types/runtime.js";
 
 export function defineChannel<
   T extends ChannelType,
@@ -32,22 +32,22 @@ export function defineChannel<
   TEmit extends IpcEventMap = Record<string, any[]>,
 >(
   type: T,
-  fn: T extends 'handle' | 'handleOnce'
+  fn: T extends "handle" | "handleOnce"
     ? IpcHandler<TArgs, TResult, TEmit>
     : IpcListener<TArgs, TResult, TEmit>,
 ) {
   return {
     fn,
-    kind: type.startsWith('handle') ? 'handler' : 'listener',
-    once: type.endsWith('Once'),
-  } as T extends 'handle' | 'handleOnce'
+    kind: type.startsWith("handle") ? "handler" : "listener",
+    once: type.endsWith("Once"),
+  } as T extends "handle" | "handleOnce"
     ? {
-        kind: 'handler';
+        kind: "handler";
         fn: IpcHandler<TArgs, TResult, TEmit>;
         once: boolean;
       }
     : {
-        kind: 'listener';
+        kind: "listener";
         fn: IpcListener<TArgs, TResult, TEmit>;
         once: boolean;
       };
@@ -63,13 +63,13 @@ export function defineIpcModule(
   const { ready } = options;
 
   return async (ipc = ipcMain) => {
-    const registered: IpcModuleRegistration['channels'][number][] = [];
+    const registered: IpcModuleRegistration["channels"][number][] = [];
 
     try {
       for (const [key, def] of Object.entries(channels)) {
         const channel = prefix ? `${prefix}:${key}` : key;
 
-        if (def.kind === 'handler') {
+        if (def.kind === "handler") {
           if (def.once) ipc.handleOnce(channel, def.fn);
           else ipc.handle(channel, def.fn);
 
@@ -78,10 +78,7 @@ export function defineIpcModule(
           if (def.once) ipc.once(channel, def.fn);
           else ipc.on(channel, def.fn);
 
-          registered.push([
-            channel,
-            () => ipc.removeListener(channel, def.fn),
-          ]);
+          registered.push([channel, () => ipc.removeListener(channel, def.fn)]);
         }
       }
 
@@ -102,31 +99,22 @@ export function defineIpcModule(
 
 export function createIpcHelpers<TEmit extends IpcEventMap>() {
   return {
-    handle<TArgs extends any[] = any[], TResult = any>(
-      fn: IpcHandler<TArgs, TResult, TEmit>,
-    ) {
-      return defineChannel('handle', fn);
+    handle<TArgs extends any[] = any[], TResult = any>(fn: IpcHandler<TArgs, TResult, TEmit>) {
+      return defineChannel("handle", fn);
     },
 
-    handleOnce<TArgs extends any[] = any[], TResult = any>(
-      fn: IpcHandler<TArgs, TResult, TEmit>,
-    ) {
-      return defineChannel('handleOnce', fn);
+    handleOnce<TArgs extends any[] = any[], TResult = any>(fn: IpcHandler<TArgs, TResult, TEmit>) {
+      return defineChannel("handleOnce", fn);
     },
 
-    listen<TArgs extends any[] = any[], TResult = any>(
-      fn: IpcListener<TArgs, TResult, TEmit>,
-    ) {
-      return defineChannel('listen', fn);
+    listen<TArgs extends any[] = any[], TResult = any>(fn: IpcListener<TArgs, TResult, TEmit>) {
+      return defineChannel("listen", fn);
     },
 
-    listenOnce<TArgs extends any[] = any[], TResult = any>(
-      fn: IpcListener<TArgs, TResult, TEmit>,
-    ) {
-      return defineChannel('listenOnce', fn);
+    listenOnce<TArgs extends any[] = any[], TResult = any>(fn: IpcListener<TArgs, TResult, TEmit>) {
+      return defineChannel("listenOnce", fn);
     },
   };
 }
 
-export const { handle, handleOnce, listen, listenOnce } =
-  createIpcHelpers();
+export const { handle, handleOnce, listen, listenOnce } = createIpcHelpers();

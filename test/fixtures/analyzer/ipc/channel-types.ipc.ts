@@ -4,11 +4,11 @@ import {
   handleOnce,
   listen,
   listenOnce,
-} from '../../../../src/runtime/ipc-module.js';
+} from "../../../../src/runtime/ipc-module.js";
 
-export const createChannelTypesIpc = defineIpcModule('channels', {
-  onceHandle: handleOnce(async () => 'once'),
+export const createChannelTypesIpc = defineIpcModule("channels", {
+  onceHandle: handleOnce(async () => "once"),
   onceListen: listenOnce(() => undefined),
-  regularHandle: handle(async () => 'ok'),
+  regularHandle: handle(async () => "ok"),
   regularListen: listen(() => undefined),
 });

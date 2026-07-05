@@ -22,9 +22,7 @@ export type { IpcBridgeOptions } from "../shared/types/bridge.js";
 
 const logger = createLogger("ipc-bridge");
 
-export function resolveIpcBridgeOptions(
-  options: IpcBridgeOptions = {},
-): ResolvedIpcBridgeOptions {
+export function resolveIpcBridgeOptions(options: IpcBridgeOptions = {}): ResolvedIpcBridgeOptions {
   return {
     ipcDir: options.ipcDir ?? DEFAULT_IPC_DIR,
     outFile: toAbsolutePosix(options.outFile ?? DEFAULT_OUT_FILE),
@@ -32,9 +30,7 @@ export function resolveIpcBridgeOptions(
   };
 }
 
-export function getIpcBridgeWatchTargets(
-  options: IpcBridgeOptions = {},
-): string[] {
+export function getIpcBridgeWatchTargets(options: IpcBridgeOptions = {}): string[] {
   const resolved = resolveIpcBridgeOptions(options);
   const watchTargets = new Set<string>([resolved.tsconfig, resolved.outFile]);
 
@@ -52,10 +48,7 @@ export function getIpcBridgeWatchTargets(
   return [...watchTargets];
 }
 
-export function isIpcBridgeRelevantFile(
-  filePath: string,
-  options: IpcBridgeOptions = {},
-) {
+export function isIpcBridgeRelevantFile(filePath: string, options: IpcBridgeOptions = {}) {
   const normalizedFile = toAbsolutePosix(filePath);
   const resolved = resolveIpcBridgeOptions(options);
 
@@ -115,10 +108,7 @@ export function runIpcBridgeGeneration(options: IpcBridgeOptions = {}) {
     writeFileSync(resolved.outFile, code, "utf-8");
   }
 
-  const totalChannels = modules.reduce(
-    (count, ipcModule) => count + ipcModule.channels.length,
-    0,
-  );
+  const totalChannels = modules.reduce((count, ipcModule) => count + ipcModule.channels.length, 0);
   const totalEvents = modules.reduce(
     (count, ipcModule) => count + ipcModule.emittedEvents.length,
     0,

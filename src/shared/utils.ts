@@ -22,10 +22,7 @@ export function createLogger(label: string, level = "info") {
     LEVELS.map((level) => {
       const method = (...args: unknown[]) => {
         const timestamp = new Date().toLocaleTimeString();
-        console[level](
-          `\x1b[${COLORS[level]}m${timestamp} [${label}]\x1b[0m`,
-          ...args,
-        );
+        console[level](`\x1b[${COLORS[level]}m${timestamp} [${label}]\x1b[0m`, ...args);
       };
       return [level, index >= LEVELS.indexOf(level) ? method : () => void 0];
     }) as [LogLevel, (...args: unknown[]) => void][],

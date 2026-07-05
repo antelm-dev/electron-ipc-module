@@ -1,1 +1,1 @@
-export const notAnIpcModule = 'ignored by analyzer';
+export const notAnIpcModule = "ignored by analyzer";

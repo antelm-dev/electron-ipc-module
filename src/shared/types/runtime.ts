@@ -12,10 +12,7 @@ export type MethodsOnly<T> = {
 
 export type MaybePromise<T> = T | Promise<T>;
 
-export type LoggerLike = Pick<
-  Console,
-  "debug" | "info" | "warn" | "error" | "log"
->;
+export type LoggerLike = Pick<Console, "debug" | "info" | "warn" | "error" | "log">;
 
 export type IpcEventMap = Record<string, readonly unknown[]>;
 
@@ -32,37 +29,29 @@ export type TypedWebContents<TEmit extends IpcEventMap = AnyIpcEventMap> = Omit<
   WebContents,
   "send"
 > & {
-  send<TKey extends IpcEventKey<TEmit>>(
-    channel: TKey,
-    ...args: IpcEventArgs<TEmit, TKey>
-  ): void;
+  send<TKey extends IpcEventKey<TEmit>>(channel: TKey, ...args: IpcEventArgs<TEmit, TKey>): void;
 };
 
 export type TypedWebFrameMain<TEmit extends IpcEventMap = AnyIpcEventMap> = Omit<
   WebFrameMain,
   "send"
 > & {
-  send<TKey extends IpcEventKey<TEmit>>(
-    channel: TKey,
-    ...args: IpcEventArgs<TEmit, TKey>
-  ): void;
+  send<TKey extends IpcEventKey<TEmit>>(channel: TKey, ...args: IpcEventArgs<TEmit, TKey>): void;
 };
 
 export type TypedIpcMainEvent<TEmit extends IpcEventMap = AnyIpcEventMap> = Omit<
   IpcMainEvent,
   "reply" | "sender" | "senderFrame"
 > & {
-  reply<TKey extends IpcEventKey<TEmit>>(
-    channel: TKey,
-    ...args: IpcEventArgs<TEmit, TKey>
-  ): void;
+  reply<TKey extends IpcEventKey<TEmit>>(channel: TKey, ...args: IpcEventArgs<TEmit, TKey>): void;
   sender: TypedWebContents<TEmit>;
   senderFrame: TypedWebFrameMain<TEmit> | null;
 };
 
-export type TypedIpcMainInvokeEvent<
-  TEmit extends IpcEventMap = AnyIpcEventMap,
-> = Omit<IpcMainInvokeEvent, "sender" | "senderFrame"> & {
+export type TypedIpcMainInvokeEvent<TEmit extends IpcEventMap = AnyIpcEventMap> = Omit<
+  IpcMainInvokeEvent,
+  "sender" | "senderFrame"
+> & {
   sender: TypedWebContents<TEmit>;
   senderFrame: TypedWebFrameMain<TEmit> | null;
 };
@@ -71,19 +60,13 @@ export type IpcHandler<
   TArgs extends any[] = any[],
   TResult = any,
   TEmit extends IpcEventMap = AnyIpcEventMap,
-> = (
-  e: TypedIpcMainInvokeEvent<TEmit>,
-  ...args: TArgs
-) => MaybePromise<TResult>;
+> = (e: TypedIpcMainInvokeEvent<TEmit>, ...args: TArgs) => MaybePromise<TResult>;
 
 export type IpcListener<
   TArgs extends any[] = any[],
   TResult = any,
   TEmit extends IpcEventMap = AnyIpcEventMap,
-> = (
-  e: TypedIpcMainEvent<TEmit>,
-  ...args: TArgs
-) => MaybePromise<TResult>;
+> = (e: TypedIpcMainEvent<TEmit>, ...args: TArgs) => MaybePromise<TResult>;
 
 export type ChannelType = "handle" | "handleOnce" | "listen" | "listenOnce";
 
@@ -129,8 +112,5 @@ export interface IpcContainerEmitter {
     event: K,
     listener: (...args: IpcContainerEvents[K]) => void,
   ): this;
-  emit<K extends keyof IpcContainerEvents>(
-    event: K,
-    ...args: IpcContainerEvents[K]
-  ): boolean;
+  emit<K extends keyof IpcContainerEvents>(event: K, ...args: IpcContainerEvents[K]): boolean;
 }

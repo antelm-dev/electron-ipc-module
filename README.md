@@ -107,12 +107,12 @@ window.ipc.profile.onProfileUpdated((profile) => {
 
 ### Runtime (`electron-ipc-module`)
 
-| Export | Description |
-| --- | --- |
-| `defineIpcModule(prefix, channels, options?)` | Register a group of IPC channels |
-| `createIpcHelpers<TEmit>()` | Create typed `handle` / `listen` helpers |
-| `handle`, `handleOnce`, `listen`, `listenOnce` | Default untyped helpers |
-| `createIpcContainer()` | Load, unload, and observe IPC modules |
+| Export                                         | Description                              |
+| ---------------------------------------------- | ---------------------------------------- |
+| `defineIpcModule(prefix, channels, options?)`  | Register a group of IPC channels         |
+| `createIpcHelpers<TEmit>()`                    | Create typed `handle` / `listen` helpers |
+| `handle`, `handleOnce`, `listen`, `listenOnce` | Default untyped helpers                  |
+| `createIpcContainer()`                         | Load, unload, and observe IPC modules    |
 
 **Typed events.** Pass an event map to `createIpcHelpers<TEmit>()` to type `event.reply`, `event.sender.send`, and `event.senderFrame?.send`. Emitted events are **not** prefixed by `defineIpcModule`.
 
@@ -150,18 +150,18 @@ Reloading a module with the same name unloads the previous version first.
 
 Analyzes `*.ipc.ts` files and generates a typed bridge for the renderer.
 
-| Option | Default | Description |
-| --- | --- | --- |
-| `ipcDir` | `./src/ipc` | Directory or glob of IPC module files |
-| `outFile` | `./src/generated/ipc-bridge.ts` | Generated TypeScript output |
-| `tsconfig` | `./tsconfig.json` | TypeScript config used for static analysis |
+| Option     | Default                         | Description                                |
+| ---------- | ------------------------------- | ------------------------------------------ |
+| `ipcDir`   | `./src/ipc`                     | Directory or glob of IPC module files      |
+| `outFile`  | `./src/generated/ipc-bridge.ts` | Generated TypeScript output                |
+| `tsconfig` | `./tsconfig.json`               | TypeScript config used for static analysis |
 
 **Naming conventions**
 
-| Source | Generated API |
-| --- | --- |
-| `profile.ipc.ts` | `bridge.profile` |
-| channel `"get-all"` | `bridge.profile.getAll()` |
+| Source                    | Generated API                          |
+| ------------------------- | -------------------------------------- |
+| `profile.ipc.ts`          | `bridge.profile`                       |
+| channel `"get-all"`       | `bridge.profile.getAll()`              |
 | event `"profile-updated"` | `bridge.profile.onProfileUpdated(...)` |
 
 **Static analysis tips**

@@ -2,29 +2,29 @@
   "name": "electron-ipc-module",
   "version": "0.1.0",
   "description": "Modular, type-safe Electron IPC with auto-generated preload bridges",
-  "author": "Adel Terki",
+  "keywords": [
+    "context-bridge",
+    "electron",
+    "ipc",
+    "main-process",
+    "preload",
+    "rollup",
+    "typescript"
+  ],
+  "homepage": "https://github.com/antelm-dev/electron-ipc-module#readme",
+  "bugs": "https://github.com/antelm-dev/electron-ipc-module/issues",
   "license": "MIT",
-  "type": "module",
+  "author": "Adel Terki",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/antelm-dev/electron-ipc-module.git"
   },
-  "bugs": "https://github.com/antelm-dev/electron-ipc-module/issues",
-  "homepage": "https://github.com/antelm-dev/electron-ipc-module#readme",
-  "keywords": [
-    "electron",
-    "ipc",
-    "typescript",
-    "preload",
-    "rollup",
-    "main-process",
-    "context-bridge"
-  ],
   "files": [
     "dist",
     "README.md",
     "LICENSE"
   ],
+  "type": "module",
   "exports": {
     ".": "./dist/index.js",
     "./rollup-plugin": "./dist/rollup-plugin.js"
@@ -32,6 +32,10 @@
   "scripts": {
     "build": "tsc --build",
     "typecheck": "tsc --build --noEmit",
+    "lint": "oxlint .",
+    "lint:fix": "oxlint --fix .",
+    "fmt": "oxfmt .",
+    "fmt:check": "oxfmt --check .",
     "test": "vitest run",
     "test:watch": "vitest",
     "prepublishOnly": "pnpm run build && pnpm run test"
@@ -39,15 +43,17 @@
   "dependencies": {
     "glob": "^11.0.3"
   },
-  "peerDependencies": {
-    "electron": ">=40.0.0"
-  },
   "devDependencies": {
     "@types/node": "^22.8.6",
     "electron": "^40.8.0",
+    "oxfmt": "^0.57.0",
+    "oxlint": "^1.72.0",
     "rollup": "^4.17.2",
     "typescript": "^5.8.3",
     "vite": "^7.3.6",
     "vitest": "^4.1.9"
+  },
+  "peerDependencies": {
+    "electron": ">=40.0.0"
   }
 }

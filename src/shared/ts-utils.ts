@@ -10,22 +10,13 @@ export const SERIALIZE_FLAGS =
 
 export function createTsProgram(tsconfigPath: string) {
   const abs = resolve(tsconfigPath);
-  const configFile = ts.readConfigFile(abs, (filePath) =>
-    readFileSync(filePath, "utf-8"),
-  );
+  const configFile = ts.readConfigFile(abs, (filePath) => readFileSync(filePath, "utf-8"));
   const basePath = dirname(abs);
-  const parsed = ts.parseJsonConfigFileContent(
-    configFile.config,
-    ts.sys,
-    basePath,
-  );
+  const parsed = ts.parseJsonConfigFileContent(configFile.config, ts.sys, basePath);
   return ts.createProgram(parsed.fileNames, parsed.options);
 }
 
-export function findCallTo(
-  node: ts.Node,
-  fnName: string,
-): ts.CallExpression | undefined {
+export function findCallTo(node: ts.Node, fnName: string): ts.CallExpression | undefined {
   if (
     ts.isCallExpression(node) &&
     ts.isIdentifier(node.expression) &&
@@ -84,9 +75,7 @@ export function unwrapAwaitedType(checker: ts.TypeChecker, type: ts.Type): ts.Ty
     });
 
     if (promiseMember) {
-      const typeArguments = checker.getTypeArguments(
-        promiseMember as ts.TypeReference,
-      );
+      const typeArguments = checker.getTypeArguments(promiseMember as ts.TypeReference);
       return typeArguments.length > 0 ? typeArguments[0] : type;
     }
   }
@@ -124,9 +113,7 @@ export function collectEmittedEvents(
     const argsType = normalizeTupleType(serializeType(checker, eventType));
 
     if (seenEmittedEvents.has(eventName)) {
-      warnings.push(
-        `Duplicate emitted event "${eventName}" - using first declaration`,
-      );
+      warnings.push(`Duplicate emitted event "${eventName}" - using first declaration`);
       continue;
     }
 
@@ -138,9 +125,7 @@ export function collectEmittedEvents(
 export function makeRelativeImports(code: string, outFilePath: string) {
   const outDir = dirname(resolve(outFilePath));
   return code.replace(/import\("([^"]+)"/g, (match, importPath: string) => {
-    const nodeModulesMatch = importPath.match(
-      /node_modules[/\\](@[^/\\]+[/\\][^/\\]+|[^/\\]+)/,
-    );
+    const nodeModulesMatch = importPath.match(/node_modules[/\\](@[^/\\]+[/\\][^/\\]+|[^/\\]+)/);
 
     if (nodeModulesMatch) {
       return `import("${nodeModulesMatch[1].replace(/\\/g, "/")}"`;

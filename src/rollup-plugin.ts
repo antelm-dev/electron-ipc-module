@@ -1,8 +1,5 @@
 import type { Plugin } from "rollup";
-import {
-  runIpcBridgeGeneration,
-  type IpcBridgeOptions,
-} from "./bridge/ipc-bridge.js";
+import { runIpcBridgeGeneration, type IpcBridgeOptions } from "./bridge/ipc-bridge.js";
 
 export type { IpcBridgeOptions } from "./bridge/ipc-bridge.js";
 

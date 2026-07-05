@@ -1,8 +1,4 @@
-import type {
-  AnalyzedIpcModule,
-  ChannelInfo,
-  EmittedEventInfo,
-} from "../shared/types/bridge.js";
+import type { AnalyzedIpcModule, ChannelInfo, EmittedEventInfo } from "../shared/types/bridge.js";
 import { toCamelCase, toPascalCase } from "../shared/utils.js";
 
 function generateImportLine(hasEmittedEvents: boolean) {
@@ -48,18 +44,14 @@ function generateChannelEntry(channel: ChannelInfo, prefix: string) {
   const method = channel.isHandler ? "invoke" : "send";
   const paramDecl = channel.argsType ? `...args: ${channel.argsType}` : "";
   const forward = channel.argsType ? ", ...args" : "";
-  const returnAnnotation = channel.isHandler
-    ? `Promise<${channel.returnType}>`
-    : "void";
+  const returnAnnotation = channel.isHandler ? `Promise<${channel.returnType}>` : "void";
 
   return `    ${camelKey}: (${paramDecl}): ${returnAnnotation} => ipcRenderer.${method}(${JSON.stringify(channelName)}${forward})`;
 }
 
 function generateEventEntries(event: EmittedEventInfo) {
   const argsType = event.argsType ?? "[]";
-  const listenerType = event.argsType
-    ? `(...args: ${event.argsType}) => void`
-    : "() => void";
+  const listenerType = event.argsType ? `(...args: ${event.argsType}) => void` : "() => void";
   const pascalKey = toPascalCase(event.key);
   const channel = JSON.stringify(event.key);
 
@@ -71,9 +63,7 @@ function generateEventEntries(event: EmittedEventInfo) {
 
 function generateModuleEntry(ipcModule: AnalyzedIpcModule) {
   const channelEntries = [
-    ...ipcModule.channels.map((channel) =>
-      generateChannelEntry(channel, ipcModule.prefix),
-    ),
+    ...ipcModule.channels.map((channel) => generateChannelEntry(channel, ipcModule.prefix)),
     ...ipcModule.emittedEvents.flatMap(generateEventEntries),
   ];
 
@@ -81,9 +71,7 @@ function generateModuleEntry(ipcModule: AnalyzedIpcModule) {
 }
 
 export function generateBridge(modules: AnalyzedIpcModule[]) {
-  const hasEmittedEvents = modules.some(
-    (ipcModule) => ipcModule.emittedEvents.length > 0,
-  );
+  const hasEmittedEvents = modules.some((ipcModule) => ipcModule.emittedEvents.length > 0);
   const lines = [generateImportLine(hasEmittedEvents), ""];
 
   if (hasEmittedEvents) {
@@ -92,10 +80,7 @@ export function generateBridge(modules: AnalyzedIpcModule[]) {
 
   const moduleEntries = modules.map(generateModuleEntry);
 
-  lines.push(
-    `export const bridge = {\n${moduleEntries.join(",\n")},\n} as const;`,
-    "",
-  );
+  lines.push(`export const bridge = {\n${moduleEntries.join(",\n")},\n} as const;`, "");
 
   return lines.join("\n");
 }

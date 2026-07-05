@@ -1,46 +1,35 @@
-import { EventEmitter } from 'node:events';
-import { ipcMain } from 'electron';
+import { EventEmitter } from "node:events";
+import { ipcMain } from "electron";
 
 import type {
   IpcContainerEmitter,
   IpcModuleRegister,
   IpcModuleRegistration,
-} from '../shared/types/runtime.js';
+} from "../shared/types/runtime.js";
 
-export type { IpcContainerEmitter } from '../shared/types/runtime.js';
+export type { IpcContainerEmitter } from "../shared/types/runtime.js";
 
 export function createIpcContainer() {
   const modules = new Map<string, IpcModuleRegistration>();
   const emitter: IpcContainerEmitter = new EventEmitter();
 
-  const load = async (
-    name: string,
-    register: IpcModuleRegister,
-    ipc = ipcMain,
-  ) => {
+  const load = async (name: string, register: IpcModuleRegister, ipc = ipcMain) => {
     if (modules.has(name)) unload(name);
 
     try {
       const registration = await register(ipc);
       modules.set(name, registration);
       const channelNames = registration.channels.map(([ch]) => ch);
-      emitter.emit('loaded', name, channelNames);
+      emitter.emit("loaded", name, channelNames);
       return channelNames;
     } catch (error) {
-      emitter.emit('error', name, error);
+      emitter.emit("error", name, error);
       throw error;
     }
   };
 
-  const loadAll = (
-    entries: Record<string, IpcModuleRegister>,
-    ipc = ipcMain,
-  ) =>
-    Promise.all(
-      Object.entries(entries).map(([name, register]) =>
-        load(name, register, ipc),
-      ),
-    );
+  const loadAll = (entries: Record<string, IpcModuleRegister>, ipc = ipcMain) =>
+    Promise.all(Object.entries(entries).map(([name, register]) => load(name, register, ipc)));
 
   const unload = (name: string) => {
     const registration = modules.get(name);
@@ -48,7 +37,7 @@ export function createIpcContainer() {
     registration.channels.forEach(([, cleanup]) => cleanup());
     registration.cleanup?.();
     modules.delete(name);
-    emitter.emit('unloaded', name);
+    emitter.emit("unloaded", name);
     return true;
   };
 
@@ -58,8 +47,7 @@ export function createIpcContainer() {
 
   const has = (name: string) => modules.has(name);
 
-  const getChannels = (name: string) =>
-    modules.get(name)?.channels.map(([ch]) => ch) ?? [];
+  const getChannels = (name: string) => modules.get(name)?.channels.map(([ch]) => ch) ?? [];
 
   return {
     load,
@@ -75,9 +63,7 @@ export function createIpcContainer() {
       return [...modules.keys()];
     },
     get allChannels() {
-      return [...modules.values()].flatMap((chs) =>
-        chs.channels.map(([ch]) => ch),
-      );
+      return [...modules.values()].flatMap((chs) => chs.channels.map(([ch]) => ch));
     },
     get size() {
       return modules.size;
