@@ -6,6 +6,5 @@
     "declaration": true,
     "composite": true
   },
-  "include": ["src/rollup-plugin.ts", "src/bridge/**/*.ts"],
-  "references": [{ "path": "./tsconfig.shared.json" }]
+  "include": ["src/shared/**/*.ts"]
 }
