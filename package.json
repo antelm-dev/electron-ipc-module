@@ -1,0 +1,29 @@
+{
+  "name": "electron-ipc-module",
+  "type": "module",
+  "exports": {
+    ".": "./dist/index.js",
+    "./rollup-plugin": "./dist/rollup-ipc-bridge.js",
+    "./vite-plugin": "./dist/vite-ipc-bridge.js"
+  },
+  "scripts": {
+    "build": "tsc --build",
+    "typecheck": "tsc --build --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "glob": "^11.0.3",
+    "typescript": "^5.8.3"
+  },
+  "peerDependencies": {
+    "electron": ">=40.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.8.6",
+    "electron": "^40.8.0",
+    "rollup": "^4.17.2",
+    "vite": "^7.3.6",
+    "vitest": "^4.1.9"
+  }
+}

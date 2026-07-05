@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "declaration": true,
+    "composite": true
+  },
+  "include": [
+    "src/rollup-plugin.ts",
+    "src/ipc-bridge.ts",
+    "src/ipc-bridge-analyzer.ts",
+    "src/ipc-bridge-generator.ts",
+    "src/ts-utils.ts",
+    "src/types.ts",
+    "src/utils.ts"
+  ]
+}
