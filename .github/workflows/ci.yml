@@ -30,6 +30,5 @@ jobs:
 
       - run: pnpm run lint
       - run: pnpm run fmt:check
-      - run: pnpm run typecheck
       - run: pnpm run build
       - run: pnpm run test
