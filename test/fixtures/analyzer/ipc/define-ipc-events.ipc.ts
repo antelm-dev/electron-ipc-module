@@ -1,8 +1,4 @@
-import { defineIpcModule, handle } from "../../../../src/runtime/ipc-module.js";
-
-function defineIpcEvents<TEvents extends Record<string, readonly unknown[]>>() {
-  return {} as TEvents;
-}
+import { defineIpcEvents, defineIpcModule, handle } from "../../../../src/runtime/ipc-module.js";
 
 type StatusEvents = {
   "status-changed": [online: boolean];

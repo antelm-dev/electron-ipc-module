@@ -14,6 +14,7 @@ import {
 import type { AnalyzedIpcModule, ChannelInfo, EmittedEventInfo } from "../shared/types/bridge.js";
 import { resolveIpcPattern, toPosixPath } from "../shared/utils.js";
 
+/** Resolve the `ipcDir` glob to the absolute POSIX paths it matches. */
 function collectMatchedIpcFiles(ipcDir: string): Set<string> {
   const pattern = resolveIpcPattern(ipcDir);
   return new Set(
@@ -24,6 +25,7 @@ function collectMatchedIpcFiles(ipcDir: string): Set<string> {
   );
 }
 
+/** A matched, non-test `*.ipc.ts` file is eligible for analysis. */
 function isAnalyzableIpcFile(fileName: string, matchedFiles: Set<string>): boolean {
   if (!matchedFiles.has(fileName)) return false;
   if (!fileName.endsWith(".ipc.ts")) return false;
@@ -31,6 +33,7 @@ function isAnalyzableIpcFile(fileName: string, matchedFiles: Set<string>): boole
   return true;
 }
 
+/** Warn about spread entries in the channels object — they can't be typed. */
 function collectSpreadWarnings(channelsArg: ts.Node): string[] {
   if (!ts.isObjectLiteralExpression(channelsArg)) return [];
 
@@ -43,11 +46,13 @@ function collectSpreadWarnings(channelsArg: ts.Node): string[] {
   return warnings;
 }
 
+/** Whether a parameter declaration is optional (`?` or has a default). */
 function isOptionalParameter(declarationNode: ts.Declaration | undefined): boolean {
   if (!declarationNode || !ts.isParameter(declarationNode)) return false;
   return Boolean(declarationNode.questionToken) || Boolean(declarationNode.initializer);
 }
 
+/** Serialize a `...rest` parameter's tuple type, or `null` if it is `[]`. */
 function serializeRestArgsType(
   checker: ts.TypeChecker,
   restParam: ts.Symbol,
@@ -58,6 +63,7 @@ function serializeRestArgsType(
   return serialized === "[]" ? null : serialized;
 }
 
+/** Serialize the explicit (non-rest) parameters after the event into a tuple. */
 function serializeNamedArgsType(
   checker: ts.TypeChecker,
   params: readonly ts.Symbol[],
@@ -75,6 +81,7 @@ function serializeNamedArgsType(
   return parts.length > 0 ? `[${parts.join(", ")}]` : null;
 }
 
+/** Serialize a channel callback's argument types (everything after the event). */
 function serializeArgsType(
   checker: ts.TypeChecker,
   signature: ts.Signature,
@@ -94,6 +101,7 @@ function serializeArgsType(
   return serializeNamedArgsType(checker, params, channelsArg);
 }
 
+/** Serialize a handler's awaited return type; listeners are always `any`. */
 function serializeReturnType(
   checker: ts.TypeChecker,
   signature: ts.Signature,
@@ -105,6 +113,7 @@ function serializeReturnType(
   return serializeType(checker, inner);
 }
 
+/** Build {@link ChannelInfo} for one property of the channels object. */
 function extractChannelInfo(
   checker: ts.TypeChecker,
   symbol: ts.Symbol,
@@ -144,6 +153,7 @@ function extractChannelInfo(
   };
 }
 
+/** Extract {@link ChannelInfo} for every property of the channels object. */
 function extractChannels(
   checker: ts.TypeChecker,
   channelsType: ts.Type,
@@ -157,6 +167,7 @@ function extractChannels(
   return channels;
 }
 
+/** Collect emitted events from the `TEmit` argument of `createIpcHelpers<…>()`. */
 function collectHelpersEmittedEvents(
   checker: ts.TypeChecker,
   sourceFile: ts.SourceFile,
@@ -179,6 +190,7 @@ function collectHelpersEmittedEvents(
   }
 }
 
+/** Whether a statement is an exported `const`/`let`/`var` declaration. */
 function isExportedVariableStatement(statement: ts.Statement): statement is ts.VariableStatement {
   if (!ts.isVariableStatement(statement)) return false;
   return Boolean(
@@ -186,6 +198,7 @@ function isExportedVariableStatement(statement: ts.Statement): statement is ts.V
   );
 }
 
+/** Collect emitted events from an `export const x = defineIpcEvents<…>()`. */
 function collectDefineIpcEventsFromDeclaration(
   checker: ts.TypeChecker,
   declaration: ts.VariableDeclaration,
@@ -200,6 +213,7 @@ function collectDefineIpcEventsFromDeclaration(
   collectEmittedEvents(checker, declaration.name, emittedEvents, seenEmittedEvents, warnings);
 }
 
+/** Scan a file's exported declarations for `defineIpcEvents<…>()` event maps. */
 function collectExportedDefineIpcEvents(
   checker: ts.TypeChecker,
   sourceFile: ts.SourceFile,
@@ -222,6 +236,10 @@ function collectExportedDefineIpcEvents(
   }
 }
 
+/**
+ * Analyze one source file into an {@link AnalyzedIpcModule}, or `null` if it
+ * contains no `defineIpcModule(prefix, channels)` call.
+ */
 function analyzeIpcSourceFile(
   checker: ts.TypeChecker,
   sourceFile: ts.SourceFile,
@@ -253,6 +271,10 @@ function analyzeIpcSourceFile(
   };
 }
 
+/**
+ * Analyze every eligible `*.ipc.ts` file in `program` and return the modules
+ * sorted by name.
+ */
 export function extractModules(program: ts.Program, ipcDir: string): AnalyzedIpcModule[] {
   const checker = program.getTypeChecker();
   const matchedFiles = collectMatchedIpcFiles(ipcDir);

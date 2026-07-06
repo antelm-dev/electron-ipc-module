@@ -5,9 +5,11 @@ import ts from "typescript";
 
 import type { EmittedEventInfo } from "./types/bridge.js";
 
+/** Type-to-string flags: never truncate, and keep fully-qualified names. */
 export const SERIALIZE_FLAGS =
   ts.TypeFormatFlags.NoTruncation | ts.TypeFormatFlags.UseFullyQualifiedType;
 
+/** Build a TypeScript program from a tsconfig path, resolving its file list. */
 export function createTsProgram(tsconfigPath: string) {
   const abs = resolve(tsconfigPath);
   const configFile = ts.readConfigFile(abs, (filePath) => readFileSync(filePath, "utf-8"));
@@ -16,6 +18,7 @@ export function createTsProgram(tsconfigPath: string) {
   return ts.createProgram(parsed.fileNames, parsed.options);
 }
 
+/** Depth-first search for the first call expression to `fnName(...)`. */
 export function findCallTo(node: ts.Node, fnName: string): ts.CallExpression | undefined {
   if (
     ts.isCallExpression(node) &&
@@ -27,13 +30,12 @@ export function findCallTo(node: ts.Node, fnName: string): ts.CallExpression | u
 
   let found: ts.CallExpression | undefined;
   ts.forEachChild(node, (child) => {
-    if (!found) {
-      found = findCallTo(child, fnName);
-    }
+    found ??= findCallTo(child, fnName);
   });
   return found;
 }
 
+/** Strip `as`, `satisfies`, angle-bracket assertions, and parentheses. */
 export function unwrapExpression(expression: ts.Expression): ts.Expression {
   let current = expression;
 
@@ -49,6 +51,7 @@ export function unwrapExpression(expression: ts.Expression): ts.Expression {
   return current;
 }
 
+/** Return the underlying `fnName(...)` call if `expression` is one, else `undefined`. */
 export function getCallToIdentifier(expression: ts.Expression, fnName: string) {
   const unwrapped = unwrapExpression(expression);
 
@@ -63,16 +66,20 @@ export function getCallToIdentifier(expression: ts.Expression, fnName: string) {
   return undefined;
 }
 
+/** Whether `expression` is a call to `fnName(...)` (after unwrapping). */
 export function isCallToIdentifier(expression: ts.Expression, fnName: string) {
   return Boolean(getCallToIdentifier(expression, fnName));
 }
 
+/**
+ * Unwrap the value type of a `Promise<T>` (including `T | Promise<T>` unions)
+ * down to `T`. Non-promise types are returned unchanged.
+ */
 export function unwrapAwaitedType(checker: ts.TypeChecker, type: ts.Type): ts.Type {
   if (type.isUnion()) {
-    const promiseMember = type.types.find((candidate) => {
-      const symbol = candidate.getSymbol();
-      return symbol && symbol.getName() === "Promise";
-    });
+    const promiseMember = type.types.find(
+      (candidate) => candidate.getSymbol()?.getName() === "Promise",
+    );
 
     if (promiseMember) {
       const typeArguments = checker.getTypeArguments(promiseMember as ts.TypeReference);
@@ -80,8 +87,7 @@ export function unwrapAwaitedType(checker: ts.TypeChecker, type: ts.Type): ts.Ty
     }
   }
 
-  const symbol = type.getSymbol();
-  if (symbol && symbol.getName() === "Promise") {
+  if (type.getSymbol()?.getName() === "Promise") {
     const typeArguments = checker.getTypeArguments(type as ts.TypeReference);
     return typeArguments.length > 0 ? typeArguments[0] : type;
   }
@@ -89,15 +95,21 @@ export function unwrapAwaitedType(checker: ts.TypeChecker, type: ts.Type): ts.Ty
   return type;
 }
 
+/** Serialize a type to its string form using {@link SERIALIZE_FLAGS}. */
 export function serializeType(checker: ts.TypeChecker, type: ts.Type) {
   return checker.typeToString(type, undefined, SERIALIZE_FLAGS);
 }
 
+/** Drop a leading `readonly` and collapse the empty tuple `[]` to `null`. */
 export function normalizeTupleType(typeStr: string) {
   const normalized = typeStr.replace(/^readonly\s+/, "");
   return normalized === "[]" ? null : normalized;
 }
 
+/**
+ * Read the properties of the event-map type at `location` and append each new
+ * one to `emittedEvents`. Duplicate event names are skipped with a warning.
+ */
 export function collectEmittedEvents(
   checker: ts.TypeChecker,
   location: ts.Node,
@@ -122,6 +134,12 @@ export function collectEmittedEvents(
   }
 }
 
+/**
+ * Rewrite the absolute `import("…")` paths TypeScript bakes into serialized
+ * types so the generated bridge is portable: `node_modules` paths become bare
+ * package specifiers, and local absolute paths become `.js` relative imports
+ * from the output file's directory.
+ */
 export function makeRelativeImports(code: string, outFilePath: string) {
   const outDir = dirname(resolve(outFilePath));
   return code.replace(/import\("([^"]+)"/g, (match, importPath: string) => {

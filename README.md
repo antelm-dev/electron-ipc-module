@@ -107,14 +107,23 @@ window.ipc.profile.onProfileUpdated((profile) => {
 
 ### Runtime (`electron-ipc-module`)
 
-| Export                                         | Description                              |
-| ---------------------------------------------- | ---------------------------------------- |
-| `defineIpcModule(prefix, channels, options?)`  | Register a group of IPC channels         |
-| `createIpcHelpers<TEmit>()`                    | Create typed `handle` / `listen` helpers |
-| `handle`, `handleOnce`, `listen`, `listenOnce` | Default untyped helpers                  |
-| `createIpcContainer()`                         | Load, unload, and observe IPC modules    |
+| Export                                         | Description                                 |
+| ---------------------------------------------- | ------------------------------------------- |
+| `defineIpcModule(prefix, channels, options?)`  | Register a group of IPC channels            |
+| `createIpcHelpers<TEmit>()`                    | Create typed `handle` / `listen` helpers    |
+| `defineIpcEvents<TEvents>()`                   | Declare an emitted-event map for the bridge |
+| `handle`, `handleOnce`, `listen`, `listenOnce` | Default untyped helpers                     |
+| `createIpcContainer()`                         | Load, unload, and observe IPC modules       |
 
 **Typed events.** Pass an event map to `createIpcHelpers<TEmit>()` to type `event.reply`, `event.sender.send`, and `event.senderFrame?.send`. Emitted events are **not** prefixed by `defineIpcModule`.
+
+Alternatively, declare an event map with `defineIpcEvents<TEvents>()` and export it from the `*.ipc.ts` file. The bridge plugin reads the type argument to generate typed `on<Event>` / `once<Event>` listeners in the renderer — useful when a module emits events without wiring them through `createIpcHelpers`:
+
+```ts
+type StatusEvents = { "status-changed": [online: boolean] };
+export const statusEvents = defineIpcEvents<StatusEvents>();
+// -> bridge.status.onStatusChanged((online) => { ... })
+```
 
 **Cleanup.** `defineIpcModule` accepts an optional `ready` hook. If registration fails, already-registered channels are rolled back automatically.
 

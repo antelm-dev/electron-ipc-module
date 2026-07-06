@@ -1,12 +1,14 @@
 import type { AnalyzedIpcModule, ChannelInfo, EmittedEventInfo } from "../shared/types/bridge.js";
 import { toCamelCase, toPascalCase } from "../shared/utils.js";
 
+/** The `electron` import line, including `IpcRendererEvent` when events exist. */
 function generateImportLine(hasEmittedEvents: boolean) {
   return hasEmittedEvents
     ? `import { ipcRenderer, type IpcRendererEvent } from 'electron';`
     : `import { ipcRenderer } from 'electron';`;
 }
 
+/** The shared `createOnHelper`/`createOnceHelper` source emitted once per bridge. */
 function generateEventHelpers() {
   return [
     "type Unsubscribe = () => void;",
@@ -38,6 +40,7 @@ function generateEventHelpers() {
   ];
 }
 
+/** One bridge method that invokes/sends on a channel, e.g. `getAll: (…) => …`. */
 function generateChannelEntry(channel: ChannelInfo, prefix: string) {
   const channelName = prefix ? `${prefix}:${channel.key}` : channel.key;
   const camelKey = toCamelCase(channel.key);
@@ -49,6 +52,7 @@ function generateChannelEntry(channel: ChannelInfo, prefix: string) {
   return `    ${camelKey}: (${paramDecl}): ${returnAnnotation} => ipcRenderer.${method}(${JSON.stringify(channelName)}${forward})`;
 }
 
+/** The `on<Event>` / `once<Event>` subscription methods for one emitted event. */
 function generateEventEntries(event: EmittedEventInfo) {
   const argsType = event.argsType ?? "[]";
   const listenerType = event.argsType ? `(...args: ${event.argsType}) => void` : "() => void";
@@ -61,6 +65,7 @@ function generateEventEntries(event: EmittedEventInfo) {
   ];
 }
 
+/** The `name: { … }` block grouping a module's channels and event helpers. */
 function generateModuleEntry(ipcModule: AnalyzedIpcModule) {
   const channelEntries = [
     ...ipcModule.channels.map((channel) => generateChannelEntry(channel, ipcModule.prefix)),
@@ -70,6 +75,10 @@ function generateModuleEntry(ipcModule: AnalyzedIpcModule) {
   return `  ${toCamelCase(ipcModule.name)}: {\n${channelEntries.join(",\n")},\n  }`;
 }
 
+/**
+ * Render the full `ipc-bridge.ts` source: the `electron` import, shared event
+ * helpers (when needed), and a `bridge` object with one entry per module.
+ */
 export function generateBridge(modules: AnalyzedIpcModule[]) {
   const hasEmittedEvents = modules.some((ipcModule) => ipcModule.emittedEvents.length > 0);
   const lines = [generateImportLine(hasEmittedEvents), ""];

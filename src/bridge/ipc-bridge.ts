@@ -22,6 +22,7 @@ export type { IpcBridgeOptions } from "../shared/types/bridge.js";
 
 const logger = createLogger("ipc-bridge");
 
+/** Apply defaults and normalize paths for the bridge options. */
 export function resolveIpcBridgeOptions(options: IpcBridgeOptions = {}): ResolvedIpcBridgeOptions {
   return {
     ipcDir: options.ipcDir ?? DEFAULT_IPC_DIR,
@@ -30,6 +31,11 @@ export function resolveIpcBridgeOptions(options: IpcBridgeOptions = {}): Resolve
   };
 }
 
+/**
+ * Files a watcher should follow to know when to regenerate the bridge: the
+ * tsconfig, the output file, and either the matched `*.ipc.ts` files (when
+ * `ipcDir` is a glob) or the `ipcDir` itself.
+ */
 export function getIpcBridgeWatchTargets(options: IpcBridgeOptions = {}): string[] {
   const resolved = resolveIpcBridgeOptions(options);
   const watchTargets = new Set<string>([resolved.tsconfig, resolved.outFile]);
@@ -48,6 +54,10 @@ export function getIpcBridgeWatchTargets(options: IpcBridgeOptions = {}): string
   return [...watchTargets];
 }
 
+/**
+ * Whether a changed `filePath` should trigger bridge regeneration — i.e. it is
+ * the tsconfig, or a `*.ipc.ts` file within the configured directory/glob.
+ */
 export function isIpcBridgeRelevantFile(filePath: string, options: IpcBridgeOptions = {}) {
   const normalizedFile = toAbsolutePosix(filePath);
   const resolved = resolveIpcBridgeOptions(options);
@@ -75,6 +85,13 @@ export function isIpcBridgeRelevantFile(filePath: string, options: IpcBridgeOpti
   return matchedFiles.has(normalizedFile);
 }
 
+/**
+ * Analyze the IPC modules and (re)write the typed preload bridge.
+ *
+ * The file is only written when its contents change, so it is safe to call on
+ * every rebuild. Returns whether it `changed`, the generated `code`, the
+ * analyzed `modules`, and the resolved `outFile` path.
+ */
 export function runIpcBridgeGeneration(options: IpcBridgeOptions = {}) {
   const resolved = resolveIpcBridgeOptions(options);
 
