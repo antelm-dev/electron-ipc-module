@@ -28,7 +28,14 @@ export function createLogger(label: string, level = "info") {
   return Object.fromEntries(
     LEVELS.map((level) => {
       const method = (...args: unknown[]) => {
-        const timestamp = new Date().toLocaleTimeString();
+        const timestamp = new Date().toLocaleTimeString('en-US', {
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+          hour12: false,
+          timeZone: "UTC",
+          timeZoneName: "short",
+        });
         console[level](`\x1b[${COLORS[level]}m${timestamp} [${label}]\x1b[0m`, ...args);
       };
       return [level, index >= LEVELS.indexOf(level) ? method : () => void 0];

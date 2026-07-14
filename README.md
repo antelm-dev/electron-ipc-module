@@ -16,7 +16,7 @@ Modular, type-safe IPC for Electron. Declare handlers in the main process, load 
 npm install electron-ipc-module
 ```
 
-**Peer dependency:** `electron >= 40`
+**Peer dependency:** `electron >= 12`
 
 ## Quick start
 
@@ -178,6 +178,12 @@ Analyzes `*.ipc.ts` files and generates a typed bridge for the renderer.
 - Use `*.ipc.ts` file names
 - Prefer a plain object literal in `defineIpcModule(...)`
 - Avoid spreads in the channels object for complete bridge typing
+
+## Security model
+
+- **Context isolation required.** The generated bridge is meant to be exposed via `contextBridge.exposeInMainWorld` in a preload script (see step 4 above); it assumes `contextIsolation: true` and `nodeIntegration: false` on the `BrowserWindow`. The runtime does not check these settings itself.
+- **No arbitrary channel exposure.** The bridge is generated statically at build time from the `*.ipc.ts` files found in `ipcDir` — the renderer only ever gets `invoke`/`send` wrappers for channels you explicitly declared with `defineIpcModule`. There is no generic `ipcRenderer.invoke`/`.send`/`.on` passthrough, so the renderer can't reach an arbitrary or future main-process channel.
+- **Main process still validates input.** Channel prefixing and typed bridges prevent *name* collisions and typos, not payload validation — handlers registered via `handle`/`listen` receive whatever the renderer sends and should validate/sanitize it themselves before touching the filesystem, network, or other privileged APIs.
 
 ## Recommended layout
 
