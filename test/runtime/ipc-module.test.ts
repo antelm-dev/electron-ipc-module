@@ -144,6 +144,48 @@ describe("defineIpcModule", () => {
     expect(handler).not.toHaveBeenCalled();
   });
 
+  it("preserves validation failures and does not invoke the handler", async () => {
+    const { handlers, ipc } = createIpc();
+    const error = new TypeError("invalid payload");
+    const handler = vi.fn();
+    await defineIpcModule(
+      "secure",
+      { save: handle(handler) },
+      {
+        validate: {
+          save: () => {
+            throw error;
+          },
+        },
+      },
+    )(ipc as never);
+
+    await expect(handlers.get("secure:save")?.({ sender: {}, senderFrame: null })).rejects.toBe(
+      error,
+    );
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("preserves registration collisions and rolls back earlier channels", async () => {
+    const { handlers, ipc } = createIpc();
+    const collision = new Error("handler already registered");
+    ipc.handle
+      .mockImplementationOnce((channel, fn) => handlers.set(channel, fn))
+      .mockImplementationOnce(() => {
+        throw collision;
+      });
+
+    await expect(
+      defineIpcModule("demo", {
+        first: handle(() => undefined),
+        second: handle(() => undefined),
+      })(ipc as never),
+    ).rejects.toBe(collision);
+
+    expect(ipc.removeHandler).toHaveBeenCalledOnce();
+    expect(ipc.removeHandler).toHaveBeenCalledWith("demo:first");
+  });
+
   it("routes unauthorized listen failures to onListenerError", async () => {
     const { listeners, ipc } = createIpc();
     const listener = vi.fn();

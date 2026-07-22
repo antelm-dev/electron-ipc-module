@@ -5,7 +5,11 @@ vi.mock("electron", () => ({
   ipcMain: {},
 }));
 
-import { createIpcContainer } from "../../src/runtime/ipc-container.js";
+import {
+  createIpcContainer,
+  IpcChannelCollisionError,
+  IpcContainerDisposedError,
+} from "../../src/runtime/ipc-container.js";
 import type { IpcCleanup, IpcModuleRegister } from "../../src/runtime/ipc-module.js";
 
 const fakeRegister =
@@ -37,11 +41,12 @@ describe("createIpcContainer", () => {
   it("loadAll loads multiple modules", async () => {
     const container = createIpcContainer();
 
-    await container.loadAll({
+    const result = await container.loadAll({
       config: fakeRegister(["config:get"]),
       theme: fakeRegister(["theme:set"]),
     });
 
+    expect(result).toEqual({ config: ["config:get"], theme: ["theme:set"] });
     expect(container.size).toBe(2);
     expect(container.names).toContain("config");
     expect(container.names).toContain("theme");
@@ -57,7 +62,7 @@ describe("createIpcContainer", () => {
     const container = createIpcContainer();
 
     await container.load("mod", register);
-    const result = container.unload("mod");
+    const result = await container.unload("mod");
 
     expect(result).toBe(true);
     expect(channelCleanup).toHaveBeenCalledOnce();
@@ -66,9 +71,9 @@ describe("createIpcContainer", () => {
     expect(container.size).toBe(0);
   });
 
-  it("unload returns false for unknown module", () => {
+  it("unload returns false for unknown module", async () => {
     const container = createIpcContainer();
-    expect(container.unload("nope")).toBe(false);
+    await expect(container.unload("nope")).resolves.toBe(false);
   });
 
   it("runs every cleanup and clears state when cleanup functions throw", async () => {
@@ -91,7 +96,7 @@ describe("createIpcContainer", () => {
       cleanup: moduleCleanup,
     }));
 
-    expect(() => container.unload("fragile")).toThrow(AggregateError);
+    await expect(container.unload("fragile")).rejects.toThrow(AggregateError);
     expect(secondCleanup).toHaveBeenCalledOnce();
     expect(moduleCleanup).toHaveBeenCalledOnce();
     expect(container.has("fragile")).toBe(false);
@@ -160,7 +165,7 @@ describe("createIpcContainer", () => {
       b: fakeRegister(["b:1"]),
     });
 
-    container.unloadAll();
+    await container.unloadAll();
     expect(container.size).toBe(0);
   });
 
@@ -210,7 +215,7 @@ describe("createIpcContainer", () => {
     expect(container.size).toBe(1);
   });
 
-  it("disposes a registration if unload happens during load", async () => {
+  it("orders unload after an overlapping load", async () => {
     const container = createIpcContainer();
     const cleanup = vi.fn();
     let release!: () => void;
@@ -229,12 +234,56 @@ describe("createIpcContainer", () => {
     });
 
     await started;
-    expect(container.unload("profile")).toBe(false);
+    const unloading = container.unload("profile");
     release();
 
-    await expect(loading).rejects.toThrow("was unloaded during registration");
+    await expect(loading).resolves.toEqual(["profile:get"]);
+    await expect(unloading).resolves.toBe(true);
     expect(cleanup).toHaveBeenCalledOnce();
     expect(container.has("profile")).toBe(false);
+    expect(container.size).toBe(0);
+  });
+
+  it("does not interleave loadAll and dispose with an earlier load", async () => {
+    const container = createIpcContainer();
+    const order: string[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    const first = container.load("first", async () => {
+      order.push("register:first:start");
+      await gate;
+      order.push("register:first:end");
+      return { channels: [["first:get", () => order.push("cleanup:first")]] };
+    });
+    const batch = container.loadAll({
+      a: async () => {
+        order.push("register:a");
+        return { channels: [["a:get", () => order.push("cleanup:a")]] };
+      },
+      b: async () => {
+        order.push("register:b");
+        return { channels: [["b:get", () => order.push("cleanup:b")]] };
+      },
+    });
+    const disposing = container.dispose();
+
+    release();
+    await first;
+    await expect(batch).resolves.toEqual({ a: ["a:get"], b: ["b:get"] });
+    await disposing;
+
+    expect(order).toEqual([
+      "register:first:start",
+      "register:first:end",
+      "register:a",
+      "register:b",
+      "cleanup:first",
+      "cleanup:a",
+      "cleanup:b",
+    ]);
     expect(container.size).toBe(0);
   });
 
@@ -254,7 +303,7 @@ describe("createIpcContainer", () => {
     container.on("unloaded", spy);
 
     await container.load("test", fakeRegister(["test:ping"]));
-    container.unload("test");
+    await container.unload("test");
 
     expect(spy).toHaveBeenCalledWith("test");
   });
@@ -277,5 +326,35 @@ describe("createIpcContainer", () => {
   it("getChannels returns empty array for unknown module", () => {
     const container = createIpcContainer();
     expect(container.getChannels("ghost")).toEqual([]);
+  });
+
+  it("rejects duplicate channels across different modules and cleans up the newcomer", async () => {
+    const container = createIpcContainer();
+    const cleanup = vi.fn();
+    await container.load("first", fakeRegister(["shared:channel"]));
+
+    await expect(
+      container.load("second", async () => ({
+        channels: [["shared:channel", cleanup]],
+      })),
+    ).rejects.toBeInstanceOf(IpcChannelCollisionError);
+
+    expect(cleanup).toHaveBeenCalledOnce();
+    expect(container.names).toEqual(["first"]);
+  });
+
+  it("dispose is ordered, terminal, and idempotent", async () => {
+    const container = createIpcContainer();
+    const cleanup = vi.fn();
+    await container.load("one", async () => ({ channels: [["one:get", cleanup]] }));
+
+    await container.dispose();
+
+    expect(cleanup).toHaveBeenCalledOnce();
+    expect(container.size).toBe(0);
+    await expect(container.load("two", fakeRegister(["two:get"]))).rejects.toBeInstanceOf(
+      IpcContainerDisposedError,
+    );
+    await expect(container.dispose()).resolves.toBeUndefined();
   });
 });

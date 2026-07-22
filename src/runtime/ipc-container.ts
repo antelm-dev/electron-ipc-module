@@ -9,37 +9,55 @@ import type {
 
 export type { IpcContainerEmitter } from "../shared/types/runtime.js";
 
+/** Thrown when a lifecycle operation is requested after `dispose()`. */
+export class IpcContainerDisposedError extends Error {
+  readonly code = "IPC_CONTAINER_DISPOSED";
+
+  constructor() {
+    super("The IPC container has been disposed");
+    this.name = "IpcContainerDisposedError";
+  }
+}
+
+/** Thrown when two loaded modules claim the same physical Electron channel. */
+export class IpcChannelCollisionError extends Error {
+  readonly code = "IPC_CHANNEL_COLLISION";
+
+  constructor(
+    readonly channel: string,
+    readonly existingModule: string,
+    readonly incomingModule: string,
+  ) {
+    super(
+      `IPC channel ${JSON.stringify(channel)} from module ${JSON.stringify(incomingModule)} ` +
+        `is already registered by module ${JSON.stringify(existingModule)}`,
+    );
+    this.name = "IpcChannelCollisionError";
+  }
+}
+
 /**
  * Create a registry that loads, unloads, and observes named IPC modules.
  *
- * Each module is registered under a unique `name`; loading a name that already
- * exists unloads the previous version first. Concurrent `load` calls for the
- * same name are serialized. The container is an event emitter: subscribe with
- * `on`/`once`/`off` to `loaded`, `unloaded`, and `error`.
+ * Mutating lifecycle calls are executed in invocation order through one queue.
+ * This makes overlap deterministic across module names as well as for the same
+ * name. `dispose()` is terminal: calls requested after it reject.
  */
 export function createIpcContainer() {
   const modules = new Map<string, IpcModuleRegistration>();
-  const pending = new Map<string, Promise<unknown>>();
-  const epochs = new Map<string, number>();
   const rawEmitter = new EventEmitter();
   const emitter: IpcContainerEmitter = rawEmitter;
+  let lifecycle: Promise<void> = Promise.resolve();
+  let disposeRequested = false;
+  let disposePromise: Promise<void> | undefined;
 
-  const bumpEpoch = (name: string) => {
-    epochs.set(name, (epochs.get(name) ?? 0) + 1);
-  };
-
-  const runExclusive = <T>(name: string, task: () => Promise<T>): Promise<T> => {
-    const previous = pending.get(name) ?? Promise.resolve();
-    const next = previous.catch(() => undefined).then(task);
-    const tracked = next.then(
+  const enqueue = <T>(task: () => Promise<T> | T): Promise<T> => {
+    const result = lifecycle.catch(() => undefined).then(task);
+    lifecycle = result.then(
       () => undefined,
       () => undefined,
     );
-    pending.set(name, tracked);
-    void tracked.then(() => {
-      if (pending.get(name) === tracked) pending.delete(name);
-    });
-    return next;
+    return result;
   };
 
   const disposeRegistration = (registration: IpcModuleRegistration) => {
@@ -61,102 +79,23 @@ export function createIpcContainer() {
     }
   };
 
-  const commitLoad = async (
-    name: string,
-    register: IpcModuleRegister,
-    ipc: typeof ipcMain,
-    mode: "replace" | "create",
-  ) => {
-    const epoch = epochs.get(name) ?? 0;
-    if (modules.has(name)) {
-      if (mode === "create") {
-        throw new Error(`IPC module ${JSON.stringify(name)} is already loaded`);
-      }
-      unloadCommitted(name);
+  const findCollision = (name: string, registration: IpcModuleRegistration) => {
+    const ownChannels = new Set<string>();
+    for (const [channel] of registration.channels) {
+      if (ownChannels.has(channel)) return new IpcChannelCollisionError(channel, name, name);
+      ownChannels.add(channel);
     }
 
-    try {
-      const registration = await register(ipc);
-      if ((epochs.get(name) ?? 0) !== epoch) {
-        disposeRegistration(registration);
-        throw Object.assign(
-          new Error(`IPC module ${JSON.stringify(name)} was unloaded during registration`),
-          { code: "IPC_LOAD_CANCELLED" as const },
-        );
-      }
-      modules.set(name, registration);
-      const channelNames = registration.channels.map(([ch]) => ch);
-      emitter.emit("loaded", name, channelNames);
-      return channelNames;
-    } catch (error) {
-      const cancelled =
-        typeof error === "object" &&
-        error !== null &&
-        "code" in error &&
-        error.code === "IPC_LOAD_CANCELLED";
-      // Node treats an unobserved `error` event specially and would replace the
-      // registration failure with ERR_UNHANDLED_ERROR.
-      if (!cancelled && rawEmitter.listenerCount("error") > 0) {
-        emitter.emit("error", name, error);
-      }
-      throw error;
-    }
-  };
-
-  /**
-   * Register a module under `name` and return its channel names. Any module
-   * already loaded under the same name is unloaded first. Emits `loaded` on
-   * success or `error` (and rethrows) if `register` fails.
-   */
-  const load = (name: string, register: IpcModuleRegister, ipc = ipcMain) =>
-    runExclusive(name, () => commitLoad(name, register, ipc, "replace"));
-
-  /**
-   * Load several modules as one transactional batch. Refuses names that are
-   * already loaded — replacements would destroy the previous registration and
-   * could not be restored if a later entry failed. Use `load` to replace a
-   * single module. If a registration fails, modules loaded earlier in this
-   * batch are unloaded before rejecting.
-   */
-  const loadAll = async (entries: Record<string, IpcModuleRegister>, ipc = ipcMain) => {
-    const conflicts = Object.keys(entries).filter((name) => modules.has(name));
-    if (conflicts.length > 0) {
-      throw new Error(
-        `loadAll cannot replace already-loaded modules (${conflicts
-          .map((name) => JSON.stringify(name))
-          .join(", ")}); use load() to replace individual modules`,
-      );
-    }
-
-    const loaded: string[] = [];
-    const channelGroups: string[][] = [];
-
-    try {
-      for (const [name, register] of Object.entries(entries)) {
-        channelGroups.push(
-          await runExclusive(name, () => commitLoad(name, register, ipc, "create")),
-        );
-        loaded.push(name);
-      }
-      return channelGroups;
-    } catch (error) {
-      const rollbackErrors: unknown[] = [];
-      for (const name of loaded.reverse()) {
-        try {
-          unload(name);
-        } catch (rollbackError) {
-          rollbackErrors.push(rollbackError);
+    for (const [existingName, existing] of modules) {
+      if (existingName === name) continue;
+      const existingChannels = new Set(existing.channels.map(([channel]) => channel));
+      for (const channel of ownChannels) {
+        if (existingChannels.has(channel)) {
+          return new IpcChannelCollisionError(channel, existingName, name);
         }
       }
-
-      if (rollbackErrors.length > 0) {
-        throw new AggregateError(
-          [error, ...rollbackErrors],
-          "IPC module batch registration and rollback both failed",
-        );
-      }
-      throw error;
     }
+    return undefined;
   };
 
   const unloadCommitted = (name: string) => {
@@ -183,27 +122,110 @@ export function createIpcContainer() {
     return true;
   };
 
-  /**
-   * Tear down a module: run every channel cleanup, then the module cleanup,
-   * then forget it. Returns `false` if no module is registered under `name`.
-   * Also invalidates any in-flight `load` for the same name so its registration
-   * is disposed instead of committed.
-   */
-  const unload = (name: string) => {
-    bumpEpoch(name);
-    return unloadCommitted(name);
+  const emitLoadError = (name: string, error: unknown) => {
+    // An unobserved Node `error` event throws and would mask the real failure.
+    if (rawEmitter.listenerCount("error") > 0) emitter.emit("error", name, error);
   };
 
-  /** Unload every registered module. */
-  const unloadAll = () => {
-    for (const name of pending.keys()) {
-      if (!modules.has(name)) bumpEpoch(name);
-    }
+  const commitLoad = async (
+    name: string,
+    register: IpcModuleRegister,
+    ipc: typeof ipcMain,
+    mode: "replace" | "create",
+  ) => {
+    try {
+      if (modules.has(name)) {
+        if (mode === "create") {
+          throw new Error(`IPC module ${JSON.stringify(name)} is already loaded`);
+        }
+        unloadCommitted(name);
+      }
 
+      const registration = await register(ipc);
+      const collision = findCollision(name, registration);
+      if (collision) {
+        try {
+          disposeRegistration(registration);
+        } catch (cleanupError) {
+          throw new AggregateError(
+            [collision, cleanupError],
+            "IPC channel collision and registration cleanup both failed",
+          );
+        }
+        throw collision;
+      }
+
+      modules.set(name, registration);
+      const channelNames = registration.channels.map(([channel]) => channel);
+      emitter.emit("loaded", name, channelNames);
+      return channelNames;
+    } catch (error) {
+      emitLoadError(name, error);
+      throw error;
+    }
+  };
+
+  /** Load or replace one module. Resolves after all earlier lifecycle calls. */
+  const load = (name: string, register: IpcModuleRegister, ipc = ipcMain) => {
+    if (disposeRequested) return Promise.reject(new IpcContainerDisposedError());
+    return enqueue(() => commitLoad(name, register, ipc, "replace"));
+  };
+
+  /**
+   * Insert a transactional batch and return channels keyed by module name.
+   * Existing names are rejected before any registration starts.
+   */
+  const loadAll = (entries: Record<string, IpcModuleRegister>, ipc = ipcMain) => {
+    if (disposeRequested) return Promise.reject(new IpcContainerDisposedError());
+    return enqueue(async () => {
+      const conflicts = Object.keys(entries).filter((name) => modules.has(name));
+      if (conflicts.length > 0) {
+        throw new Error(
+          `loadAll cannot replace already-loaded modules (${conflicts
+            .map((name) => JSON.stringify(name))
+            .join(", ")}); use load() to replace individual modules`,
+        );
+      }
+
+      const loaded: string[] = [];
+      const result: Record<string, string[]> = {};
+      try {
+        for (const [name, register] of Object.entries(entries)) {
+          result[name] = await commitLoad(name, register, ipc, "create");
+          loaded.push(name);
+        }
+        return result;
+      } catch (error) {
+        const rollbackErrors: unknown[] = [];
+        for (const name of loaded.reverse()) {
+          try {
+            unloadCommitted(name);
+          } catch (rollbackError) {
+            rollbackErrors.push(rollbackError);
+          }
+        }
+        if (rollbackErrors.length > 0) {
+          throw new AggregateError(
+            [error, ...rollbackErrors],
+            "IPC module batch registration and rollback both failed",
+          );
+        }
+        throw error;
+      }
+    });
+  };
+
+  /** Unload one module after all earlier lifecycle calls. */
+  const unload = (name: string) => {
+    if (disposeRequested) return Promise.reject(new IpcContainerDisposedError());
+    return enqueue(() => unloadCommitted(name));
+  };
+
+  const unloadAllCommitted = () => {
     const errors: unknown[] = [];
     for (const name of Array.from(modules.keys())) {
       try {
-        unload(name);
+        unloadCommitted(name);
       } catch (error) {
         errors.push(error);
       }
@@ -213,10 +235,21 @@ export function createIpcContainer() {
     }
   };
 
-  /** Whether a module is registered under `name`. */
-  const has = (name: string) => modules.has(name);
+  /** Unload every module; the container remains reusable. */
+  const unloadAll = () => {
+    if (disposeRequested) return Promise.reject(new IpcContainerDisposedError());
+    return enqueue(unloadAllCommitted);
+  };
 
-  /** Channel names registered by `name`, or `[]` if it is not loaded. */
+  /** Unload every module and permanently reject later lifecycle calls. */
+  const dispose = () => {
+    if (disposePromise) return disposePromise;
+    disposeRequested = true;
+    disposePromise = enqueue(unloadAllCommitted);
+    return disposePromise;
+  };
+
+  const has = (name: string) => modules.has(name);
   const getChannels = (name: string) => modules.get(name)?.channels.map(([ch]) => ch) ?? [];
 
   return {
@@ -224,21 +257,20 @@ export function createIpcContainer() {
     loadAll,
     unload,
     unloadAll,
-    dispose: unloadAll,
+    dispose,
     has,
     getChannels,
     on: emitter.on.bind(emitter),
     off: emitter.off.bind(emitter),
     once: emitter.once.bind(emitter),
-    /** Names of every currently loaded module. */
     get names() {
       return [...modules.keys()];
     },
-    /** Every channel name across all loaded modules. */
     get allChannels() {
-      return [...modules.values()].flatMap((chs) => chs.channels.map(([ch]) => ch));
+      return [...modules.values()].flatMap((registration) =>
+        registration.channels.map(([channel]) => channel),
+      );
     },
-    /** Number of loaded modules. */
     get size() {
       return modules.size;
     },

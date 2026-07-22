@@ -20,6 +20,13 @@ npm install electron-ipc-module
 
 **Peer dependency:** `electron >= 12`
 
+## 0.1 compatibility contract
+
+- **Modules:** ESM only. Use `import`; CommonJS `require()` is not a supported entry point.
+- **Node.js:** Node 20 and every even/odd release from Node 22 onward (`20 || >=22`). CI covers Node 20 and 22.
+- **Electron:** `electron >=12` is an API-compatibility claim, not a promise that every old Electron release is continuously tested or supported upstream. CI covers the latest patch of Electron's three currently supported stable majors (41, 42, and 43 when this contract was frozen). The matrix advances with [Electron's latest-three-stable support policy](https://www.electronjs.org/docs/latest/tutorial/electron-timelines).
+- **Package paths:** only `.`, `./rollup-plugin`, `./vite-plugin`, and `./generator` are public. Files under `dist/` are implementation details.
+
 ## Quick start
 
 ### 1. Define an IPC module
@@ -174,18 +181,40 @@ ipc.on("loaded", (name, channels) => {});
 ipc.on("unloaded", (name) => {});
 ipc.on("error", (name, error) => {});
 
-ipc.unload("profile");
-ipc.unloadAll();
+await ipc.unload("profile");
+await ipc.unloadAll();
 ```
 
-Reloading a module with the same name via `load` unloads the previous version first.
-Overlapping `load` calls for the same name are serialized so a superseded
-registration cannot leak attached handlers.
-`loadAll` is insert-only and transactional: it refuses names that are already
-loaded (use `load` to replace), and rolls back modules loaded earlier in the
-batch if a later registration fails. Cleanup failures are reported as
-`AggregateError` after every cleanup has been attempted and container state has
-been cleared. `dispose()` is an alias for `unloadAll()`.
+All lifecycle mutations (`load`, `loadAll`, `unload`, `unloadAll`, and `dispose`) are asynchronous and run through one FIFO queue in invocation order. Reads such as `has`, `names`, and `getChannels` report only committed state and do not wait for that queue.
+
+- `load(name, register)` unloads a committed module with the same name before it starts the replacement registration. If replacement fails, the old module stays unloaded.
+- `loadAll(entries)` is insert-only and transactional. It rejects before registration if any supplied name is loaded, then registers entries in object iteration order. Its result is `Record<string, string[]>`, preserving each module name. A failure rolls back every earlier entry from that batch.
+- `unload(name)` waits for earlier calls, returns `false` for an unknown name, or removes the module and returns `true`.
+- `unloadAll()` waits for earlier calls, attempts every loaded module in insertion order, and leaves the container reusable.
+- `dispose()` waits for earlier calls, unloads everything, and is terminal and idempotent. Repeated calls return the same result. Other lifecycle calls requested after `dispose()` reject with `IpcContainerDisposedError`; read methods remain available and report the final committed state.
+- Physical channel names must be unique across loaded modules, regardless of whether they are handlers or listeners. The incoming registration is cleaned up and rejected with `IpcChannelCollisionError`. Duplicate channels returned within one registration are rejected the same way.
+
+Because the queue is global, overlap has no special race behavior: `load(); unload()` loads and then unloads, two loads replace in call order, and no operation can interleave with a `loadAll` batch or `dispose`.
+
+### Error contract
+
+| Failure                | 0.1 behavior                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Authorization          | `authorize` returning `false` creates `IpcAuthorizationError`. A thrown/rejected authorization error is preserved. Handlers reject; listeners use listener-failure behavior below.                                                                                                                                                                                                                                 |
+| Validation             | The validator's thrown/rejected value is preserved. The channel callback is not called. Handlers reject; listeners use listener-failure behavior below.                                                                                                                                                                                                                                                            |
+| Handler callback       | A thrown value or rejected promise is preserved and returned through Electron's `invoke` rejection path.                                                                                                                                                                                                                                                                                                           |
+| Listener callback      | Synchronous throws and promise rejections are caught. `onListenerError(error, context, event)` is called once, or the error is logged when no hook exists. If the hook itself throws, that secondary error is logged; it is never rethrown into Electron's event emitter.                                                                                                                                          |
+| Cleanup                | Every relevant channel cleanup and module cleanup is attempted. State is removed even on failure. One or more failures reject with `AggregateError`; rollback errors are aggregated with the original failure, original error first.                                                                                                                                                                               |
+| Registration collision | Electron registration errors are preserved and already-attached channels are rolled back. Container-detected duplicate physical channels reject with `IpcChannelCollisionError`; cleanup failure produces an `AggregateError` containing both errors.                                                                                                                                                              |
+| Generator diagnostics  | TypeScript configuration, syntax, and semantic errors and unsafe-to-generate conditions throw `Error` and abort without writing output. Analyzer limitations such as spreads and duplicate event declarations are returned in each module's `warnings` and logged, but generation continues. CLI commands report thrown diagnostics and exit non-zero; `check` also exits non-zero when generated output is stale. |
+
+`load` emits `error` only when an error listener is attached, so Node's special unhandled `error` event cannot mask the rejection. `loaded` is emitted after commit and `unloaded` after state removal.
+
+### Intentional public exports
+
+The root export contains the runtime values shown above, `IpcAuthorizationError`, `IpcChannelCollisionError`, and `IpcContainerDisposedError`. Its exported types are the callback/event types (`IpcHandler`, `IpcListener`, typed Electron event/sender types), module/container registration types, option/context types, channel definition types, generator analysis/option types, and the general `MaybePromise`, `MethodsOnly`, and `LoggerLike` helpers. These lower-level types are public so wrappers and tooling can describe compatible registrations without importing internal files.
+
+The Rollup and Vite paths export the plugin default plus `IpcBridgeOptions`. The generator path exports `resolveIpcBridgeOptions`, `getIpcBridgeWatchTargets`, `isIpcBridgeRelevantFile`, `runIpcBridgeGeneration`, and `IpcBridgeOptions`. Compile-time API tests import all of these through the built package export map; no public-contract test imports `src`.
 
 ### Rollup plugin (`electron-ipc-module/rollup-plugin`)
 

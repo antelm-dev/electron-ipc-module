@@ -53,13 +53,14 @@
     "build": "tsc --build",
     "prepare": "tsc --build",
     "typecheck": "tsc -p tsconfig.vitest.json --noEmit",
+    "test:api": "pnpm run build && tsc -p tsconfig.public-api.json --noEmit",
     "lint": "oxlint .",
     "lint:fix": "oxlint --fix .",
     "fmt": "oxfmt .",
     "fmt:check": "oxfmt --check .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "check": "pnpm run fmt:check && pnpm run lint && pnpm run typecheck && pnpm run test",
+    "check": "pnpm run fmt:check && pnpm run lint && pnpm run typecheck && pnpm run test:api && pnpm run test",
     "prepack": "pnpm run check && pnpm run build"
   },
   "dependencies": {
@@ -67,7 +68,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.8.6",
-    "electron": "^40.8.0",
+    "electron": "^43.2.0",
     "oxfmt": "^0.57.0",
     "oxlint": "^1.72.0",
     "rollup": "^4.17.2",
