@@ -71,6 +71,49 @@ describe("createIpcContainer", () => {
     expect(container.unload("nope")).toBe(false);
   });
 
+  it("runs every cleanup and clears state when cleanup functions throw", async () => {
+    const firstError = new Error("first cleanup failed");
+    const secondCleanup = vi.fn();
+    const moduleCleanup = vi.fn(() => {
+      throw new Error("module cleanup failed");
+    });
+    const container = createIpcContainer();
+    await container.load("fragile", async () => ({
+      channels: [
+        [
+          "first",
+          () => {
+            throw firstError;
+          },
+        ],
+        ["second", secondCleanup],
+      ],
+      cleanup: moduleCleanup,
+    }));
+
+    expect(() => container.unload("fragile")).toThrow(AggregateError);
+    expect(secondCleanup).toHaveBeenCalledOnce();
+    expect(moduleCleanup).toHaveBeenCalledOnce();
+    expect(container.has("fragile")).toBe(false);
+  });
+
+  it("rolls back modules loaded earlier in a failed batch", async () => {
+    const cleanup = vi.fn();
+    const container = createIpcContainer();
+
+    await expect(
+      container.loadAll({
+        good: async () => ({ channels: [["good:one", cleanup]] }),
+        bad: async () => {
+          throw new Error("bad registration");
+        },
+      }),
+    ).rejects.toThrow("bad registration");
+
+    expect(cleanup).toHaveBeenCalledOnce();
+    expect(container.size).toBe(0);
+  });
+
   it("unloadAll removes all modules", async () => {
     const container = createIpcContainer();
     await container.loadAll({

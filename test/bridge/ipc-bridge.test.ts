@@ -47,7 +47,7 @@ describe("resolveIpcBridgeOptions", () => {
 });
 
 describe("getIpcBridgeWatchTargets", () => {
-  it("includes tsconfig, out file, and ipc directory for plain dirs", () => {
+  it("includes tsconfig and ipc directory, but not generated output, for plain dirs", () => {
     const options = {
       ipcDir: FIXTURE_IPC_DIR,
       outFile: "./tmp/bridge.ts",
@@ -57,7 +57,7 @@ describe("getIpcBridgeWatchTargets", () => {
     const targets = getIpcBridgeWatchTargets(options);
 
     expect(targets).toContain(resolved.tsconfig);
-    expect(targets).toContain(resolved.outFile);
+    expect(targets).not.toContain(resolved.outFile);
     expect(targets).toContain(toAbsolutePosix(FIXTURE_IPC_DIR));
   });
 
@@ -155,6 +155,20 @@ describe("runIpcBridgeGeneration", () => {
     expect(second.code).toBe(first.code);
     expect(readFileSync(outFile, "utf-8")).toBe(first.code);
     expect(readFileSync(outFile).length).toBe(mtimeMs);
+  });
+
+  it("can check for stale output without writing it", () => {
+    const result = runIpcBridgeGeneration(
+      {
+        ipcDir: FIXTURE_IPC_DIR,
+        outFile,
+        tsconfig: FIXTURE_TSCONFIG,
+      },
+      { write: false },
+    );
+
+    expect(result.changed).toBe(true);
+    expect(existsSync(outFile)).toBe(false);
   });
 
   it("reports spread warnings for channels using object spread", () => {

@@ -1,4 +1,4 @@
-import { ipcMain, type IpcMain } from "electron";
+import { ipcMain, type IpcMain, type IpcMainEvent, type IpcMainInvokeEvent } from "electron";
 
 import type {
   ChannelDef,
@@ -64,6 +64,22 @@ export function defineChannel<
 }
 
 /** Options accepted by {@link defineIpcModule}. */
+export interface IpcChannelContext {
+  /** Fully-qualified runtime channel name. */
+  channel: string;
+  /** Channel key as declared in the module. */
+  key: string;
+  /** Module prefix. */
+  prefix: string;
+}
+
+export class IpcAuthorizationError extends Error {
+  constructor(channel: string) {
+    super(`IPC request was not authorized for channel ${JSON.stringify(channel)}`);
+    this.name = "IpcAuthorizationError";
+  }
+}
+
 export interface DefineIpcModuleOptions {
   /**
    * Hook run after every channel is registered. May return a cleanup callback
@@ -71,6 +87,64 @@ export interface DefineIpcModuleOptions {
    * registered so far are rolled back before the error propagates.
    */
   ready?: (ipc: IpcMain) => MaybePromise<void | IpcModuleCleanup>;
+  /** Return `false` to reject calls from an untrusted renderer or frame. */
+  authorize?: (
+    event: IpcMainEvent | IpcMainInvokeEvent,
+    context: IpcChannelContext,
+  ) => MaybePromise<boolean | void>;
+  /** Per-channel runtime payload validators. Throw to reject invalid input. */
+  validate?: Record<
+    string,
+    (
+      args: readonly unknown[],
+      event: IpcMainEvent | IpcMainInvokeEvent,
+      context: IpcChannelContext,
+    ) => MaybePromise<void>
+  >;
+  /** Prefix emitted renderer event channels with the module prefix or a custom prefix. */
+  eventPrefix?: boolean | string;
+}
+
+function prefixEventChannel(eventPrefix: string | undefined, channel: string) {
+  return eventPrefix ? `${eventPrefix}:${channel}` : channel;
+}
+
+function wrapSendTarget<T extends object>(target: T, eventPrefix: string | undefined): T {
+  if (!eventPrefix) return target;
+  return new Proxy(target, {
+    get(object, property) {
+      if (property !== "send") {
+        const value = Reflect.get(object, property, object);
+        return typeof value === "function" ? value.bind(object) : value;
+      }
+      return (channel: string, ...args: unknown[]) =>
+        Reflect.apply(Reflect.get(object, property) as (...args: unknown[]) => unknown, object, [
+          prefixEventChannel(eventPrefix, channel),
+          ...args,
+        ]);
+    },
+  });
+}
+
+function wrapEvent<T extends IpcMainEvent | IpcMainInvokeEvent>(
+  event: T,
+  eventPrefix: string | undefined,
+): T {
+  if (!eventPrefix) return event;
+  return new Proxy(event, {
+    get(object, property) {
+      if (property === "sender") return wrapSendTarget(object.sender, eventPrefix);
+      if (property === "senderFrame") {
+        return object.senderFrame ? wrapSendTarget(object.senderFrame, eventPrefix) : null;
+      }
+      if (property === "reply" && "reply" in object) {
+        return (channel: string, ...args: unknown[]) =>
+          object.reply(prefixEventChannel(eventPrefix, channel), ...args);
+      }
+      const value = Reflect.get(object, property, object);
+      return typeof value === "function" ? value.bind(object) : value;
+    },
+  });
 }
 
 /**
@@ -93,7 +167,13 @@ export function defineIpcModule(
   channels: Record<string, ChannelDef>,
   options: DefineIpcModuleOptions = {},
 ) {
-  const { ready } = options;
+  const { authorize, ready, validate } = options;
+  const eventPrefix =
+    options.eventPrefix === true
+      ? prefix
+      : typeof options.eventPrefix === "string"
+        ? options.eventPrefix
+        : undefined;
 
   return async (ipc = ipcMain) => {
     const registered: IpcModuleRegistration["channels"][number][] = [];
@@ -101,17 +181,34 @@ export function defineIpcModule(
     try {
       for (const [key, def] of Object.entries(channels)) {
         const channel = prefix ? `${prefix}:${key}` : key;
+        const context = { channel, key, prefix } satisfies IpcChannelContext;
+        const validator = validate?.[key];
+        const callUserFunction = (event: IpcMainEvent | IpcMainInvokeEvent, args: unknown[]) =>
+          def.fn(wrapEvent(event, eventPrefix) as never, ...args);
+        const fn: (...args: any[]) => any =
+          authorize || validator
+            ? async (event: IpcMainEvent | IpcMainInvokeEvent, ...args: unknown[]) => {
+                if ((await authorize?.(event, context)) === false) {
+                  throw new IpcAuthorizationError(channel);
+                }
+                await validator?.(args, event, context);
+                return callUserFunction(event, args);
+              }
+            : eventPrefix
+              ? (event: IpcMainEvent | IpcMainInvokeEvent, ...args: unknown[]) =>
+                  callUserFunction(event, args)
+              : def.fn;
 
         if (def.kind === "handler") {
-          if (def.once) ipc.handleOnce(channel, def.fn);
-          else ipc.handle(channel, def.fn);
+          if (def.once) ipc.handleOnce(channel, fn);
+          else ipc.handle(channel, fn);
 
           registered.push([channel, () => ipc.removeHandler(channel)]);
         } else {
-          if (def.once) ipc.once(channel, def.fn);
-          else ipc.on(channel, def.fn);
+          if (def.once) ipc.once(channel, fn);
+          else ipc.on(channel, fn);
 
-          registered.push([channel, () => ipc.removeListener(channel, def.fn)]);
+          registered.push([channel, () => ipc.removeListener(channel, fn)]);
         }
       }
 
@@ -122,8 +219,19 @@ export function defineIpcModule(
         cleanup: cleanup ?? undefined,
       };
     } catch (error) {
+      const rollbackErrors: unknown[] = [];
       for (const [, cleanup] of registered.reverse()) {
-        cleanup();
+        try {
+          cleanup();
+        } catch (rollbackError) {
+          rollbackErrors.push(rollbackError);
+        }
+      }
+      if (rollbackErrors.length > 0) {
+        throw new AggregateError(
+          [error, ...rollbackErrors],
+          "IPC module registration and rollback both failed",
+        );
       }
       throw error;
     }

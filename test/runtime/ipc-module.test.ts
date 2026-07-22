@@ -4,6 +4,7 @@ import {
   handleOnce,
   listen,
   listenOnce,
+  IpcAuthorizationError,
 } from "../../src/runtime/ipc-module.js";
 import { vi, describe, it, expect } from "vitest";
 
@@ -38,7 +39,6 @@ describe("defineIpcModule", () => {
         notify: listenOnce(() => undefined),
       },
       {
-        cleanup,
         ready,
       },
     );
@@ -105,6 +105,56 @@ describe("defineIpcModule", () => {
     })(ipc as never);
 
     expect(ipc.handle).toHaveBeenCalledWith("ping", expect.any(Function));
+  });
+
+  it("authorizes and validates handler calls before invoking user code", async () => {
+    const { handlers, ipc } = createIpc();
+    const authorize = vi.fn(() => true);
+    const validate = vi.fn();
+    const handler = vi.fn((_event, value: string) => value.toUpperCase());
+
+    await defineIpcModule(
+      "secure",
+      { save: handle(handler) },
+      { authorize, validate: { save: validate } },
+    )(ipc as never);
+
+    const event = { sender: {}, senderFrame: null };
+    await expect(handlers.get("secure:save")?.(event, "ok")).resolves.toBe("OK");
+    expect(authorize).toHaveBeenCalledWith(event, {
+      channel: "secure:save",
+      key: "save",
+      prefix: "secure",
+    });
+    expect(validate).toHaveBeenCalledWith(["ok"], event, expect.any(Object));
+  });
+
+  it("rejects unauthorized handler calls", async () => {
+    const { handlers, ipc } = createIpc();
+    const handler = vi.fn();
+    await defineIpcModule(
+      "secure",
+      { read: handle(handler) },
+      { authorize: () => false },
+    )(ipc as never);
+
+    await expect(
+      handlers.get("secure:read")?.({ sender: {}, senderFrame: null }),
+    ).rejects.toBeInstanceOf(IpcAuthorizationError);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("optionally namespaces emitted renderer events", async () => {
+    const { handlers, ipc } = createIpc();
+    const send = vi.fn();
+    await defineIpcModule(
+      "profile",
+      { save: handle((event) => event.sender.send("updated", "id")) },
+      { eventPrefix: true },
+    )(ipc as never);
+
+    await handlers.get("profile:save")?.({ sender: { send }, senderFrame: null });
+    expect(send).toHaveBeenCalledWith("profile:updated", "id");
   });
 
   it("registers handlers that can be invoked with args and return values", async () => {

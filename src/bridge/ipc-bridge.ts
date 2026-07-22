@@ -33,12 +33,12 @@ export function resolveIpcBridgeOptions(options: IpcBridgeOptions = {}): Resolve
 
 /**
  * Files a watcher should follow to know when to regenerate the bridge: the
- * tsconfig, the output file, and either the matched `*.ipc.ts` files (when
+ * tsconfig and either the matched `*.ipc.ts` files (when
  * `ipcDir` is a glob) or the `ipcDir` itself.
  */
 export function getIpcBridgeWatchTargets(options: IpcBridgeOptions = {}): string[] {
   const resolved = resolveIpcBridgeOptions(options);
-  const watchTargets = new Set<string>([resolved.tsconfig, resolved.outFile]);
+  const watchTargets = new Set<string>([resolved.tsconfig]);
 
   if (hasGlobMagic(resolved.ipcDir)) {
     for (const matchedFile of globSync(resolveIpcPattern(resolved.ipcDir), {
@@ -92,7 +92,10 @@ export function isIpcBridgeRelevantFile(filePath: string, options: IpcBridgeOpti
  * every rebuild. Returns whether it `changed`, the generated `code`, the
  * analyzed `modules`, and the resolved `outFile` path.
  */
-export function runIpcBridgeGeneration(options: IpcBridgeOptions = {}) {
+export function runIpcBridgeGeneration(
+  options: IpcBridgeOptions = {},
+  generationOptions: { write?: boolean } = {},
+) {
   const resolved = resolveIpcBridgeOptions(options);
 
   logger.info("Analyzing IPC modules...");
@@ -120,7 +123,7 @@ export function runIpcBridgeGeneration(options: IpcBridgeOptions = {}) {
   })();
 
   const changed = previousCode !== code;
-  if (changed) {
+  if (changed && generationOptions.write !== false) {
     mkdirSync(dirname(resolved.outFile), { recursive: true });
     writeFileSync(resolved.outFile, code, "utf-8");
   }
@@ -131,8 +134,9 @@ export function runIpcBridgeGeneration(options: IpcBridgeOptions = {}) {
     0,
   );
 
+  const action = generationOptions.write === false ? "Checked" : "Generated";
   logger.info(
-    `Generated bridge: ${modules.length} modules, ${totalChannels} channels, ${totalEvents} emitted events -> ${resolved.outFile}`,
+    `${action} bridge: ${modules.length} modules, ${totalChannels} channels, ${totalEvents} emitted events -> ${resolved.outFile}`,
   );
 
   return {

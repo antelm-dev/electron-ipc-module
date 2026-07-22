@@ -41,6 +41,8 @@ export interface AnalyzedIpcModule {
   name: string;
   /** Channel prefix passed to `defineIpcModule`. */
   prefix: string;
+  /** Optional physical prefix applied to emitted renderer event channels. */
+  eventPrefix?: string;
   channels: ChannelInfo[];
   emittedEvents: EmittedEventInfo[];
   /** Non-fatal issues found while analyzing (e.g. spreads, duplicate events). */

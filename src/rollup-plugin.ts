@@ -1,5 +1,9 @@
 import type { Plugin } from "rollup";
-import { runIpcBridgeGeneration, type IpcBridgeOptions } from "./bridge/ipc-bridge.js";
+import {
+  getIpcBridgeWatchTargets,
+  runIpcBridgeGeneration,
+  type IpcBridgeOptions,
+} from "./bridge/ipc-bridge.js";
 
 export type { IpcBridgeOptions } from "./bridge/ipc-bridge.js";
 
@@ -11,6 +15,9 @@ export default function ipcBridge(options: IpcBridgeOptions = {}): Plugin {
   return {
     name: "ipc-bridge",
     buildStart() {
+      for (const file of getIpcBridgeWatchTargets(options)) {
+        this.addWatchFile(file);
+      }
       runIpcBridgeGeneration(options);
     },
   };

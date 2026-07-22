@@ -19,15 +19,18 @@
     "type": "git",
     "url": "git+https://github.com/antelm-dev/electron-ipc-module.git"
   },
+  "bin": {
+    "electron-ipc-module": "./dist/cli.js"
+  },
   "files": [
     "dist",
     "README.md",
     "LICENSE"
   ],
   "type": "module",
+  "sideEffects": false,
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "sideEffects": false,
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -36,19 +39,28 @@
     "./rollup-plugin": {
       "types": "./dist/rollup-plugin.d.ts",
       "import": "./dist/rollup-plugin.js"
+    },
+    "./vite-plugin": {
+      "types": "./dist/rollup-plugin.d.ts",
+      "import": "./dist/rollup-plugin.js"
+    },
+    "./generator": {
+      "types": "./dist/bridge/ipc-bridge.d.ts",
+      "import": "./dist/bridge/ipc-bridge.js"
     }
   },
   "scripts": {
     "build": "tsc --build",
     "prepare": "tsc --build",
-    "typecheck": "tsc --build --noEmit",
+    "typecheck": "tsc -p tsconfig.vitest.json --noEmit",
     "lint": "oxlint .",
     "lint:fix": "oxlint --fix .",
     "fmt": "oxfmt .",
     "fmt:check": "oxfmt --check .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "prepublishOnly": "pnpm run build && pnpm run test"
+    "check": "pnpm run fmt:check && pnpm run lint && pnpm run typecheck && pnpm run test",
+    "prepack": "pnpm run check && pnpm run build"
   },
   "dependencies": {
     "glob": "^11.0.3"
@@ -65,5 +77,9 @@
   },
   "peerDependencies": {
     "electron": ">=12.0.0"
-  }
+  },
+  "engines": {
+    "node": "20 || >=22"
+  },
+  "packageManager": "pnpm@9.15.9"
 }

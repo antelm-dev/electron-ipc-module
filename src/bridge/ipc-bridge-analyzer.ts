@@ -248,7 +248,14 @@ function analyzeIpcSourceFile(
   if (!defineCall || defineCall.arguments.length < 2) return null;
 
   const prefixArg = defineCall.arguments[0];
-  const prefix = ts.isStringLiteral(prefixArg) ? prefixArg.text : "";
+  if (!ts.isStringLiteralLike(prefixArg)) {
+    const location = sourceFile.getLineAndCharacterOfPosition(prefixArg.getStart(sourceFile));
+    throw new Error(
+      `${sourceFile.fileName}:${location.line + 1}:${location.character + 1} ` +
+        "defineIpcModule prefix must be a string literal so the generated bridge uses the runtime channel name",
+    );
+  }
+  const prefix = prefixArg.text;
   const channelsArg = defineCall.arguments[1];
   const channelsType = checker.getTypeAtLocation(channelsArg);
 
@@ -257,6 +264,23 @@ function analyzeIpcSourceFile(
   const emittedEvents: EmittedEventInfo[] = [];
   const seenEmittedEvents = new Set<string>();
 
+  let eventPrefix: string | undefined;
+  const optionsArg = defineCall.arguments[2];
+  if (optionsArg && ts.isObjectLiteralExpression(optionsArg)) {
+    const property = optionsArg.properties.find(
+      (candidate): candidate is ts.PropertyAssignment =>
+        ts.isPropertyAssignment(candidate) &&
+        ((ts.isIdentifier(candidate.name) && candidate.name.text === "eventPrefix") ||
+          (ts.isStringLiteral(candidate.name) && candidate.name.text === "eventPrefix")),
+    );
+    if (property) {
+      if (property.initializer.kind === ts.SyntaxKind.TrueKeyword) eventPrefix = prefix;
+      else if (ts.isStringLiteralLike(property.initializer))
+        eventPrefix = property.initializer.text;
+      else warnings.push("eventPrefix must be true or a string literal for bridge generation");
+    }
+  }
+
   collectHelpersEmittedEvents(checker, sourceFile, emittedEvents, seenEmittedEvents, warnings);
   collectExportedDefineIpcEvents(checker, sourceFile, emittedEvents, seenEmittedEvents, warnings);
 
@@ -264,6 +288,7 @@ function analyzeIpcSourceFile(
   return {
     name: basename(fileName, ".ipc.ts"),
     prefix,
+    eventPrefix,
     channels,
     emittedEvents,
     warnings,

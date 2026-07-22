@@ -126,4 +126,38 @@ describe("generateBridge", () => {
     expect(code).toContain('ipcRenderer.invoke("ping")');
     expect(code).not.toContain('":ping"');
   });
+
+  it("rejects generated method and module name collisions", () => {
+    expect(() =>
+      generateBridge([
+        moduleFixture({
+          name: "collision",
+          channels: [
+            { key: "get-all", isHandler: true, argsType: null, returnType: "void" },
+            { key: "get_all", isHandler: true, argsType: null, returnType: "void" },
+          ],
+        }),
+      ]),
+    ).toThrow("generated identifier collision");
+
+    expect(() =>
+      generateBridge([
+        moduleFixture({ name: "user-profile", channels: [] }),
+        moduleFixture({ name: "user_profile", channels: [] }),
+      ]),
+    ).toThrow("generated identifier collision");
+  });
+
+  it("uses the configured physical event prefix", () => {
+    const code = generateBridge([
+      moduleFixture({
+        name: "profile",
+        channels: [],
+        eventPrefix: "profile",
+        emittedEvents: [{ key: "updated", argsType: null }],
+      }),
+    ]);
+
+    expect(code).toContain('createOnHelper<[]>("profile:updated", listener)');
+  });
 });

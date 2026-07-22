@@ -9,6 +9,8 @@ Modular, type-safe IPC for Electron. Declare handlers in the main process, load 
 - Typed renderer events via `reply`, `sender.send`, and `senderFrame.send`
 - Container to load, unload, and observe multiple IPC modules
 - Rollup plugin that generates a typed `ipcRenderer` bridge from `*.ipc.ts` files
+- Runtime authorization and payload-validation hooks
+- Standalone generate/check/watch CLI
 
 ## Installation
 
@@ -137,6 +139,23 @@ defineIpcModule("profile", channels, {
 });
 ```
 
+**Authorization and runtime validation.** Types protect callers at compile time; these hooks protect the actual main-process boundary. Returning `false` from `authorize` rejects the call with `IpcAuthorizationError`. Validators should throw when a payload is invalid.
+
+```ts
+defineIpcModule("profile", channels, {
+  authorize: (event) => event.senderFrame?.url.startsWith("app://") === true,
+  validate: {
+    save: (args) => profileInputSchema.parse(args[0]),
+  },
+});
+```
+
+**Event namespacing.** Set `eventPrefix: true` to turn emitted event channels such as `updated` into `profile:updated`. The generated API remains `bridge.profile.onUpdated(...)`. A string may be supplied for a custom physical prefix.
+
+```ts
+defineIpcModule("profile", channels, { eventPrefix: true });
+```
+
 **Container.**
 
 ```ts
@@ -154,6 +173,7 @@ ipc.unloadAll();
 ```
 
 Reloading a module with the same name unloads the previous version first.
+`loadAll` rolls back modules loaded earlier in the batch if a later registration fails. Cleanup failures are reported as `AggregateError` after every cleanup has been attempted and container state has been cleared. `dispose()` is an alias for `unloadAll()`.
 
 ### Rollup plugin (`electron-ipc-module/rollup-plugin`)
 
@@ -178,12 +198,31 @@ Analyzes `*.ipc.ts` files and generates a typed bridge for the renderer.
 - Use `*.ipc.ts` file names
 - Prefer a plain object literal in `defineIpcModule(...)`
 - Avoid spreads in the channels object for complete bridge typing
+- Use a string literal for the module prefix so build-time and runtime channel names cannot diverge
+
+The plugin also implements Vite's compatible plugin API and is available as `electron-ipc-module/vite-plugin`.
+
+### Generator CLI
+
+The same generator can be used without Rollup:
+
+```bash
+npx electron-ipc-module generate \
+  --ipc-dir ./main/ipc \
+  --out-file ./main/generated/ipc-bridge.ts \
+  --tsconfig ./tsconfig.preload.json
+
+npx electron-ipc-module generate --watch
+npx electron-ipc-module check
+```
+
+`check` does not write files and exits non-zero when the generated bridge is stale. The programmatic generator is exported from `electron-ipc-module/generator`.
 
 ## Security model
 
 - **Context isolation required.** The generated bridge is meant to be exposed via `contextBridge.exposeInMainWorld` in a preload script (see step 4 above); it assumes `contextIsolation: true` and `nodeIntegration: false` on the `BrowserWindow`. The runtime does not check these settings itself.
 - **No arbitrary channel exposure.** The bridge is generated statically at build time from the `*.ipc.ts` files found in `ipcDir` — the renderer only ever gets `invoke`/`send` wrappers for channels you explicitly declared with `defineIpcModule`. There is no generic `ipcRenderer.invoke`/`.send`/`.on` passthrough, so the renderer can't reach an arbitrary or future main-process channel.
-- **Main process still validates input.** Channel prefixing and typed bridges prevent *name* collisions and typos, not payload validation — handlers registered via `handle`/`listen` receive whatever the renderer sends and should validate/sanitize it themselves before touching the filesystem, network, or other privileged APIs.
+- **Main process still validates input.** Channel prefixing and typed bridges prevent _name_ collisions and typos, not payload attacks. Use the `authorize` and `validate` hooks (or equivalent checks inside handlers) before touching the filesystem, network, or other privileged APIs.
 
 ## Recommended layout
 

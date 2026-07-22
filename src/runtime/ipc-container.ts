@@ -18,7 +18,8 @@ export type { IpcContainerEmitter } from "../shared/types/runtime.js";
  */
 export function createIpcContainer() {
   const modules = new Map<string, IpcModuleRegistration>();
-  const emitter: IpcContainerEmitter = new EventEmitter();
+  const rawEmitter = new EventEmitter();
+  const emitter: IpcContainerEmitter = rawEmitter;
 
   /**
    * Register a module under `name` and return its channel names. Any module
@@ -35,14 +36,46 @@ export function createIpcContainer() {
       emitter.emit("loaded", name, channelNames);
       return channelNames;
     } catch (error) {
-      emitter.emit("error", name, error);
+      // Node treats an unobserved `error` event specially and would replace the
+      // registration failure with ERR_UNHANDLED_ERROR.
+      if (rawEmitter.listenerCount("error") > 0) emitter.emit("error", name, error);
       throw error;
     }
   };
 
-  /** Load several modules concurrently, keyed by name. */
-  const loadAll = (entries: Record<string, IpcModuleRegister>, ipc = ipcMain) =>
-    Promise.all(Object.entries(entries).map(([name, register]) => load(name, register, ipc)));
+  /**
+   * Load several modules as one batch. If a registration fails, modules that
+   * were newly loaded earlier in this batch are unloaded before rejecting.
+   */
+  const loadAll = async (entries: Record<string, IpcModuleRegister>, ipc = ipcMain) => {
+    const loaded: string[] = [];
+    const channelGroups: string[][] = [];
+
+    try {
+      for (const [name, register] of Object.entries(entries)) {
+        channelGroups.push(await load(name, register, ipc));
+        loaded.push(name);
+      }
+      return channelGroups;
+    } catch (error) {
+      const rollbackErrors: unknown[] = [];
+      for (const name of loaded.reverse()) {
+        try {
+          unload(name);
+        } catch (rollbackError) {
+          rollbackErrors.push(rollbackError);
+        }
+      }
+
+      if (rollbackErrors.length > 0) {
+        throw new AggregateError(
+          [error, ...rollbackErrors],
+          "IPC module batch registration and rollback both failed",
+        );
+      }
+      throw error;
+    }
+  };
 
   /**
    * Tear down a module: run every channel cleanup, then the module cleanup,
@@ -51,16 +84,46 @@ export function createIpcContainer() {
   const unload = (name: string) => {
     const registration = modules.get(name);
     if (!registration) return false;
-    registration.channels.forEach(([, cleanup]) => cleanup());
-    registration.cleanup?.();
+
+    const errors: unknown[] = [];
+    for (const [, cleanup] of registration.channels) {
+      try {
+        cleanup();
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    try {
+      registration.cleanup?.();
+    } catch (error) {
+      errors.push(error);
+    }
+
     modules.delete(name);
     emitter.emit("unloaded", name);
+
+    if (errors.length > 0) {
+      throw new AggregateError(
+        errors,
+        `Failed to completely unload IPC module ${JSON.stringify(name)}`,
+      );
+    }
     return true;
   };
 
   /** Unload every registered module. */
   const unloadAll = () => {
-    for (const name of modules.keys()) unload(name);
+    const errors: unknown[] = [];
+    for (const name of modules.keys()) {
+      try {
+        unload(name);
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    if (errors.length > 0) {
+      throw new AggregateError(errors, "Failed to completely unload all IPC modules");
+    }
   };
 
   /** Whether a module is registered under `name`. */
@@ -74,6 +137,7 @@ export function createIpcContainer() {
     loadAll,
     unload,
     unloadAll,
+    dispose: unloadAll,
     has,
     getChannels,
     on: emitter.on.bind(emitter),
