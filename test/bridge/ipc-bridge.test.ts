@@ -61,15 +61,15 @@ describe("getIpcBridgeWatchTargets", () => {
     expect(targets).toContain(toAbsolutePosix(FIXTURE_IPC_DIR));
   });
 
-  it("includes matched ipc files when ipcDir is a glob", () => {
+  it("watches the nearest non-glob ancestor when ipcDir is a glob", () => {
     const globDir = join(FIXTURE_IPC_DIR, "*.ipc.ts").replaceAll("\\", "/");
     const targets = getIpcBridgeWatchTargets({
       ipcDir: globDir,
       tsconfig: FIXTURE_TSCONFIG,
     });
 
-    expect(targets).toContain(toAbsolutePosix(DEMO_IPC_FILE));
-    expect(targets).not.toContain(toAbsolutePosix(FIXTURE_IPC_DIR));
+    expect(targets).toContain(toAbsolutePosix(FIXTURE_IPC_DIR));
+    expect(targets).not.toContain(toAbsolutePosix(DEMO_IPC_FILE));
   });
 });
 
@@ -97,6 +97,20 @@ describe("isIpcBridgeRelevantFile", () => {
 
     expect(isIpcBridgeRelevantFile(DEMO_IPC_FILE, globOptions)).toBe(true);
     expect(isIpcBridgeRelevantFile(SPREAD_IPC_FILE, globOptions)).toBe(false);
+  });
+
+  it("matches newly created or deleted ipc files against a glob without scanning disk", () => {
+    const globOptions = {
+      ipcDir: `${toAbsolutePosix(FIXTURE_IPC_DIR)}/*.ipc.ts`,
+      tsconfig: FIXTURE_TSCONFIG,
+    };
+
+    expect(isIpcBridgeRelevantFile(join(FIXTURE_IPC_DIR, "brand-new.ipc.ts"), globOptions)).toBe(
+      true,
+    );
+    expect(isIpcBridgeRelevantFile(join(FIXTURE_IPC_DIR, "nested/x.ipc.ts"), globOptions)).toBe(
+      false,
+    );
   });
 });
 

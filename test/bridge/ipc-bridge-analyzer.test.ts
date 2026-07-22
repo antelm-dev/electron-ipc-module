@@ -21,19 +21,39 @@ describe("extractModules", () => {
     const modules = analyzeFixtureModules();
 
     expect(modules.map((module) => module.name)).toEqual([
+      "aliased",
       "channel-types",
       "define-ipc-events",
       "duplicate-events",
       "factory",
+      "namespaced",
       "typed-args",
     ]);
   });
 
-  it("ignores test ipc files and files without defineIpcModule", () => {
+  it("ignores test ipc files, files without defineIpcModule, and same-named local helpers", () => {
     const modules = analyzeFixtureModules();
 
     expect(modules.some((module) => module.name === "ignored.test")).toBe(false);
     expect(modules.some((module) => module.name === "no-module")).toBe(false);
+    expect(modules.some((module) => module.name === "shadowed")).toBe(false);
+  });
+
+  it("resolves aliased and namespace imports of defineIpcModule", () => {
+    const modules = analyzeFixtureModules();
+    const aliased = modules.find((module) => module.name === "aliased");
+    const namespaced = modules.find((module) => module.name === "namespaced");
+
+    expect(aliased?.prefix).toBe("aliased");
+    expect(aliased?.channels.map((channel) => channel.key).sort()).toEqual(["echo", "ping"]);
+    expect(aliased?.emittedEvents).toEqual(
+      expect.arrayContaining([
+        { key: "aliased-ready", argsType: "[ok: boolean]" },
+        { key: "aliased-ping", argsType: "[n: number]" },
+      ]),
+    );
+    expect(namespaced?.prefix).toBe("namespaced");
+    expect(namespaced?.channels.map((channel) => channel.key)).toEqual(["ping"]);
   });
 
   it("finds defineIpcModule inside factory functions", () => {

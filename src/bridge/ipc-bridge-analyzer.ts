@@ -6,8 +6,8 @@ import ts from "typescript";
 import {
   collectEmittedEvents,
   findCallTo,
-  getCallToIdentifier,
-  isCallToIdentifier,
+  getCallToExport,
+  isCallToExportExpression,
   serializeType,
   unwrapAwaitedType,
 } from "../shared/ts-utils.js";
@@ -181,7 +181,7 @@ function collectHelpersEmittedEvents(
     for (const declaration of statement.declarationList.declarations) {
       if (!declaration.initializer) continue;
 
-      const helpersCall = getCallToIdentifier(declaration.initializer, "createIpcHelpers");
+      const helpersCall = getCallToExport(checker, declaration.initializer, "createIpcHelpers");
       const eventMapNode = helpersCall?.typeArguments?.[0];
       if (!eventMapNode) continue;
 
@@ -208,7 +208,7 @@ function collectDefineIpcEventsFromDeclaration(
 ): void {
   if (!declaration.initializer) return;
   if (!ts.isIdentifier(declaration.name)) return;
-  if (!isCallToIdentifier(declaration.initializer, "defineIpcEvents")) return;
+  if (!isCallToExportExpression(checker, declaration.initializer, "defineIpcEvents")) return;
 
   collectEmittedEvents(checker, declaration.name, emittedEvents, seenEmittedEvents, warnings);
 }
@@ -244,7 +244,7 @@ function analyzeIpcSourceFile(
   checker: ts.TypeChecker,
   sourceFile: ts.SourceFile,
 ): AnalyzedIpcModule | null {
-  const defineCall = findCallTo(sourceFile, "defineIpcModule");
+  const defineCall = findCallTo(checker, sourceFile, "defineIpcModule");
   if (!defineCall || defineCall.arguments.length < 2) return null;
 
   const prefixArg = defineCall.arguments[0];

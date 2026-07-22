@@ -1,8 +1,8 @@
-import { createIpcHelpers, defineIpcModule } from "../../../../src/runtime/ipc-module.js";
-
-function defineIpcEvents<TEvents extends Record<string, readonly unknown[]>>() {
-  return {} as TEvents;
-}
+import {
+  createIpcHelpers,
+  defineIpcEvents,
+  defineIpcModule,
+} from "../../../../src/runtime/ipc-module.js";
 
 type HelperEvents = {
   "shared-event": [source: string];

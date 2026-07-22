@@ -147,8 +147,14 @@ defineIpcModule("profile", channels, {
   validate: {
     save: (args) => profileInputSchema.parse(args[0]),
   },
+  // listen/listenOnce failures are not returned to the renderer — hook or log them
+  onListenerError: (error, context) => {
+    console.error(`IPC listener failed on ${context.channel}`, error);
+  },
 });
 ```
+
+For `handle` channels, rejected promises propagate back through `ipcRenderer.invoke`. For fire-and-forget `listen` channels, failures are caught and passed to `onListenerError` (or logged) so they never become unhandled rejections.
 
 **Event namespacing.** Set `eventPrefix: true` to turn emitted event channels such as `updated` into `profile:updated`. The generated API remains `bridge.profile.onUpdated(...)`. A string may be supplied for a custom physical prefix.
 
@@ -172,8 +178,14 @@ ipc.unload("profile");
 ipc.unloadAll();
 ```
 
-Reloading a module with the same name unloads the previous version first.
-`loadAll` rolls back modules loaded earlier in the batch if a later registration fails. Cleanup failures are reported as `AggregateError` after every cleanup has been attempted and container state has been cleared. `dispose()` is an alias for `unloadAll()`.
+Reloading a module with the same name via `load` unloads the previous version first.
+Overlapping `load` calls for the same name are serialized so a superseded
+registration cannot leak attached handlers.
+`loadAll` is insert-only and transactional: it refuses names that are already
+loaded (use `load` to replace), and rolls back modules loaded earlier in the
+batch if a later registration fails. Cleanup failures are reported as
+`AggregateError` after every cleanup has been attempted and container state has
+been cleared. `dispose()` is an alias for `unloadAll()`.
 
 ### Rollup plugin (`electron-ipc-module/rollup-plugin`)
 

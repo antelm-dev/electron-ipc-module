@@ -72,6 +72,15 @@ export function toAbsolutePosix(filePath: string) {
   return toPosixPath(resolve(filePath));
 }
 
+/** Nearest absolute directory ancestor of a path/glob that has no glob magic. */
+export function globWatchRoot(pattern: string) {
+  const normalized = toAbsolutePosix(pattern);
+  const magicIndex = normalized.search(/[*?[\]{}()!]/);
+  if (magicIndex === -1) return normalized;
+  const slashIndex = normalized.lastIndexOf("/", magicIndex);
+  return slashIndex > 0 ? normalized.slice(0, slashIndex) : toAbsolutePosix(".");
+}
+
 /** Build the default `**\/*.ipc.ts` glob for a plain directory. */
 export function defaultPatternFromDir(dir: string) {
   const normalizedDir = dir.replace(/[\\/]+$/, "");

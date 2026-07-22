@@ -144,6 +144,85 @@ describe("defineIpcModule", () => {
     expect(handler).not.toHaveBeenCalled();
   });
 
+  it("routes unauthorized listen failures to onListenerError", async () => {
+    const { listeners, ipc } = createIpc();
+    const listener = vi.fn();
+    const onListenerError = vi.fn();
+    const event = { sender: {}, senderFrame: null };
+
+    await defineIpcModule(
+      "secure",
+      { notify: listen(listener) },
+      { authorize: async () => false, onListenerError },
+    )(ipc as never);
+
+    listeners.get("secure:notify")?.(event, "payload");
+    await vi.waitFor(() => expect(onListenerError).toHaveBeenCalledOnce());
+
+    expect(onListenerError.mock.calls[0]?.[0]).toBeInstanceOf(IpcAuthorizationError);
+    expect(onListenerError.mock.calls[0]?.[1]).toEqual({
+      channel: "secure:notify",
+      key: "notify",
+      prefix: "secure",
+    });
+    expect(onListenerError.mock.calls[0]?.[2]).toBe(event);
+    expect(listener).not.toHaveBeenCalled();
+  });
+
+  it("catches rejected listen promises without unhandled rejections", async () => {
+    const { listeners, ipc } = createIpc();
+    const error = new Error("listener failed");
+    const onListenerError = vi.fn();
+    const rejectionHandler = vi.fn();
+    process.on("unhandledRejection", rejectionHandler);
+
+    try {
+      await defineIpcModule(
+        "demo",
+        {
+          notify: listen(async () => {
+            throw error;
+          }),
+        },
+        { onListenerError },
+      )(ipc as never);
+
+      listeners.get("demo:notify")?.({ sender: {}, senderFrame: null });
+      await vi.waitFor(() =>
+        expect(onListenerError).toHaveBeenCalledWith(error, expect.any(Object), expect.any(Object)),
+      );
+      await Promise.resolve();
+      expect(rejectionHandler).not.toHaveBeenCalled();
+    } finally {
+      process.off("unhandledRejection", rejectionHandler);
+    }
+  });
+
+  it("logs listen failures when onListenerError is omitted", async () => {
+    const { listeners, ipc } = createIpc();
+    const error = new Error("boom");
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    try {
+      await defineIpcModule(
+        "demo",
+        {
+          notify: listen(async () => {
+            throw error;
+          }),
+        },
+        { authorize: () => true },
+      )(ipc as never);
+
+      listeners.get("demo:notify")?.({ sender: {}, senderFrame: null });
+      await vi.waitFor(() => expect(consoleError).toHaveBeenCalled());
+      expect(consoleError.mock.calls[0]?.[0]).toContain("demo:notify");
+      expect(consoleError.mock.calls[0]?.[1]).toBe(error);
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
   it("optionally namespaces emitted renderer events", async () => {
     const { handlers, ipc } = createIpc();
     const send = vi.fn();

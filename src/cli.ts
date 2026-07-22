@@ -1,13 +1,15 @@
 #!/usr/bin/env node
 
 import { watch } from "node:fs";
+import { join } from "node:path";
 
 import {
+  isIpcBridgeRelevantFile,
   resolveIpcBridgeOptions,
   runIpcBridgeGeneration,
   type IpcBridgeOptions,
 } from "./bridge/ipc-bridge.js";
-import { hasGlobMagic, toAbsolutePosix } from "./shared/utils.js";
+import { globWatchRoot, hasGlobMagic, toAbsolutePosix } from "./shared/utils.js";
 
 const HELP = `electron-ipc-module <generate|check> [options]
 
@@ -50,21 +52,14 @@ function parseArguments(args: string[]) {
   return { command, options, watchMode };
 }
 
-function globWatchRoot(pattern: string) {
-  const normalized = toAbsolutePosix(pattern);
-  const magicIndex = normalized.search(/[*?[\]{}()!]/);
-  if (magicIndex === -1) return normalized;
-  const slashIndex = normalized.lastIndexOf("/", magicIndex);
-  return slashIndex > 0 ? normalized.slice(0, slashIndex) : toAbsolutePosix(".");
-}
-
 function startWatch(options: IpcBridgeOptions) {
   const resolved = resolveIpcBridgeOptions(options);
   const ipcTarget = hasGlobMagic(resolved.ipcDir)
     ? globWatchRoot(resolved.ipcDir)
     : toAbsolutePosix(resolved.ipcDir);
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const regenerate = () => {
+  const regenerate = (filePath?: string) => {
+    if (filePath && !isIpcBridgeRelevantFile(filePath, options)) return;
     clearTimeout(timer);
     timer = setTimeout(() => {
       try {
@@ -75,8 +70,10 @@ function startWatch(options: IpcBridgeOptions) {
     }, 50);
   };
 
-  watch(ipcTarget, { recursive: true }, regenerate);
-  watch(resolved.tsconfig, regenerate);
+  watch(ipcTarget, { recursive: true }, (_event, filename) => {
+    regenerate(filename == null ? undefined : toAbsolutePosix(join(ipcTarget, filename)));
+  });
+  watch(resolved.tsconfig, () => regenerate(resolved.tsconfig));
   console.info(`Watching ${ipcTarget} and ${resolved.tsconfig}`);
 }
 

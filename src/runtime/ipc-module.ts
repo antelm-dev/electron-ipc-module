@@ -101,8 +101,52 @@ export interface DefineIpcModuleOptions {
       context: IpcChannelContext,
     ) => MaybePromise<void>
   >;
+  /**
+   * Called when a fire-and-forget `listen` / `listenOnce` channel rejects.
+   * Unlike `handle` channels, listener failures are not returned to the
+   * renderer — without this hook they are logged to avoid unhandled rejections.
+   */
+  onListenerError?: (error: unknown, context: IpcChannelContext, event: IpcMainEvent) => void;
   /** Prefix emitted renderer event channels with the module prefix or a custom prefix. */
   eventPrefix?: boolean | string;
+}
+
+function isThenable(value: unknown): value is PromiseLike<unknown> {
+  return (
+    value != null &&
+    (typeof value === "object" || typeof value === "function") &&
+    typeof (value as PromiseLike<unknown>).then === "function"
+  );
+}
+
+function reportListenerError(
+  error: unknown,
+  context: IpcChannelContext,
+  event: IpcMainEvent,
+  onListenerError: DefineIpcModuleOptions["onListenerError"],
+) {
+  if (onListenerError) {
+    try {
+      onListenerError(error, context, event);
+    } catch (hookError) {
+      console.error(
+        `[electron-ipc-module] onListenerError failed for ${JSON.stringify(context.channel)}`,
+        hookError,
+      );
+    }
+    return;
+  }
+
+  console.error(
+    `[electron-ipc-module] Unhandled error in listener ${JSON.stringify(context.channel)}`,
+    error,
+  );
+}
+
+function settleListener(result: unknown, onError: (error: unknown) => void): void {
+  if (isThenable(result)) {
+    void Promise.resolve(result).then(undefined, onError);
+  }
 }
 
 function prefixEventChannel(eventPrefix: string | undefined, channel: string) {
@@ -167,7 +211,7 @@ export function defineIpcModule(
   channels: Record<string, ChannelDef>,
   options: DefineIpcModuleOptions = {},
 ) {
-  const { authorize, ready, validate } = options;
+  const { authorize, onListenerError, ready, validate } = options;
   const eventPrefix =
     options.eventPrefix === true
       ? prefix
@@ -185,26 +229,48 @@ export function defineIpcModule(
         const validator = validate?.[key];
         const callUserFunction = (event: IpcMainEvent | IpcMainInvokeEvent, args: unknown[]) =>
           def.fn(wrapEvent(event, eventPrefix) as never, ...args);
-        const fn: (...args: any[]) => any =
-          authorize || validator
-            ? async (event: IpcMainEvent | IpcMainInvokeEvent, ...args: unknown[]) => {
-                if ((await authorize?.(event, context)) === false) {
-                  throw new IpcAuthorizationError(channel);
-                }
-                await validator?.(args, event, context);
-                return callUserFunction(event, args);
-              }
-            : eventPrefix
-              ? (event: IpcMainEvent | IpcMainInvokeEvent, ...args: unknown[]) =>
-                  callUserFunction(event, args)
-              : def.fn;
+        const runGuarded = async (
+          event: IpcMainEvent | IpcMainInvokeEvent,
+          args: unknown[],
+        ): Promise<unknown> => {
+          if ((await authorize?.(event, context)) === false) {
+            throw new IpcAuthorizationError(channel);
+          }
+          await validator?.(args, event, context);
+          return callUserFunction(event, args);
+        };
 
+        let fn: (...args: any[]) => any;
         if (def.kind === "handler") {
+          fn =
+            authorize || validator
+              ? (event: IpcMainInvokeEvent, ...args: unknown[]) => runGuarded(event, args)
+              : eventPrefix
+                ? (event: IpcMainInvokeEvent, ...args: unknown[]) => callUserFunction(event, args)
+                : def.fn;
+
           if (def.once) ipc.handleOnce(channel, fn);
           else ipc.handle(channel, fn);
 
           registered.push([channel, () => ipc.removeHandler(channel)]);
         } else {
+          const invoke =
+            authorize || validator
+              ? (event: IpcMainEvent, args: unknown[]) => runGuarded(event, args)
+              : eventPrefix
+                ? (event: IpcMainEvent, args: unknown[]) => callUserFunction(event, args)
+                : (event: IpcMainEvent, args: unknown[]) => def.fn(event as never, ...args);
+
+          fn = (event: IpcMainEvent, ...args: unknown[]) => {
+            const onError = (error: unknown) =>
+              reportListenerError(error, context, event, onListenerError);
+            try {
+              settleListener(invoke(event, args), onError);
+            } catch (error) {
+              onError(error);
+            }
+          };
+
           if (def.once) ipc.once(channel, fn);
           else ipc.on(channel, fn);
 

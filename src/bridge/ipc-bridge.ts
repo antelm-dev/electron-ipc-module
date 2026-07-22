@@ -1,7 +1,5 @@
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
-
-import { globSync } from "glob";
+import { dirname, matchesGlob } from "node:path";
 
 import { extractModules } from "./ipc-bridge-analyzer.js";
 import { generateBridge } from "./ipc-bridge-generator.js";
@@ -12,10 +10,10 @@ import {
   DEFAULT_IPC_DIR,
   DEFAULT_OUT_FILE,
   DEFAULT_TSCONFIG,
+  globWatchRoot,
   hasGlobMagic,
   resolveIpcPattern,
   toAbsolutePosix,
-  toPosixPath,
 } from "../shared/utils.js";
 
 export type { IpcBridgeOptions } from "../shared/types/bridge.js";
@@ -32,26 +30,18 @@ export function resolveIpcBridgeOptions(options: IpcBridgeOptions = {}): Resolve
 }
 
 /**
- * Files a watcher should follow to know when to regenerate the bridge: the
- * tsconfig and either the matched `*.ipc.ts` files (when
- * `ipcDir` is a glob) or the `ipcDir` itself.
+ * Paths a watcher should follow to know when to regenerate the bridge: the
+ * tsconfig and either `ipcDir` itself, or — when `ipcDir` is a glob — its
+ * nearest non-glob ancestor directory (so newly created matches are seen).
+ * Filter change events with {@link isIpcBridgeRelevantFile}.
  */
 export function getIpcBridgeWatchTargets(options: IpcBridgeOptions = {}): string[] {
   const resolved = resolveIpcBridgeOptions(options);
-  const watchTargets = new Set<string>([resolved.tsconfig]);
+  const ipcTarget = hasGlobMagic(resolved.ipcDir)
+    ? globWatchRoot(resolved.ipcDir)
+    : toAbsolutePosix(resolved.ipcDir);
 
-  if (hasGlobMagic(resolved.ipcDir)) {
-    for (const matchedFile of globSync(resolveIpcPattern(resolved.ipcDir), {
-      nodir: true,
-      absolute: true,
-    })) {
-      watchTargets.add(toPosixPath(matchedFile));
-    }
-    return [...watchTargets];
-  }
-
-  watchTargets.add(toAbsolutePosix(resolved.ipcDir));
-  return [...watchTargets];
+  return [resolved.tsconfig, ipcTarget];
 }
 
 /**
@@ -75,14 +65,7 @@ export function isIpcBridgeRelevantFile(filePath: string, options: IpcBridgeOpti
     return normalizedFile.startsWith(`${normalizedIpcDir}/`);
   }
 
-  const matchedFiles = new Set(
-    globSync(resolveIpcPattern(resolved.ipcDir), {
-      nodir: true,
-      absolute: true,
-    }).map((matchedFile) => toPosixPath(matchedFile)),
-  );
-
-  return matchedFiles.has(normalizedFile);
+  return matchesGlob(normalizedFile, toAbsolutePosix(resolveIpcPattern(resolved.ipcDir)));
 }
 
 /**

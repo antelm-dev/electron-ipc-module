@@ -114,6 +114,45 @@ describe("createIpcContainer", () => {
     expect(container.size).toBe(0);
   });
 
+  it("loadAll refuses to replace already-loaded modules", async () => {
+    const existingCleanup = vi.fn();
+    const container = createIpcContainer();
+    await container.load("config", async () => ({
+      channels: [["config:get", existingCleanup]],
+    }));
+
+    await expect(
+      container.loadAll({
+        config: fakeRegister(["config:get"]),
+        theme: fakeRegister(["theme:set"]),
+      }),
+    ).rejects.toThrow(/cannot replace already-loaded modules.*"config"/);
+
+    expect(existingCleanup).not.toHaveBeenCalled();
+    expect(container.getChannels("config")).toEqual(["config:get"]);
+    expect(container.has("theme")).toBe(false);
+    expect(container.size).toBe(1);
+  });
+
+  it("loadAll rejects the whole batch before loading when a conflict exists", async () => {
+    const existingCleanup = vi.fn();
+    const container = createIpcContainer();
+    await container.load("keep", async () => ({
+      channels: [["keep:one", existingCleanup]],
+    }));
+
+    await expect(
+      container.loadAll({
+        fresh: fakeRegister(["fresh:one"]),
+        keep: fakeRegister(["keep:two"]),
+      }),
+    ).rejects.toThrow(/cannot replace already-loaded modules.*"keep"/);
+
+    expect(existingCleanup).not.toHaveBeenCalled();
+    expect(container.has("fresh")).toBe(false);
+    expect(container.getChannels("keep")).toEqual(["keep:one"]);
+  });
+
   it("unloadAll removes all modules", async () => {
     const container = createIpcContainer();
     await container.loadAll({
@@ -136,6 +175,67 @@ describe("createIpcContainer", () => {
 
     expect(cleanup1).toHaveBeenCalledOnce();
     expect(container.getChannels("mod")).toEqual(["ch2"]);
+  });
+
+  it("serializes overlapping loads for the same name", async () => {
+    const container = createIpcContainer();
+    const cleanupFirst = vi.fn();
+    const cleanupSecond = vi.fn();
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let resolveStarted!: () => void;
+    const firstStarted = new Promise<void>((resolve) => {
+      resolveStarted = resolve;
+    });
+
+    const first = container.load("profile", async () => {
+      resolveStarted();
+      await firstGate;
+      return { channels: [["profile:get", cleanupFirst]] };
+    });
+    const second = container.load("profile", async () => ({
+      channels: [["profile:set", cleanupSecond]],
+    }));
+
+    await firstStarted;
+    releaseFirst();
+    await expect(first).resolves.toEqual(["profile:get"]);
+    await expect(second).resolves.toEqual(["profile:set"]);
+
+    expect(cleanupFirst).toHaveBeenCalledOnce();
+    expect(cleanupSecond).not.toHaveBeenCalled();
+    expect(container.getChannels("profile")).toEqual(["profile:set"]);
+    expect(container.size).toBe(1);
+  });
+
+  it("disposes a registration if unload happens during load", async () => {
+    const container = createIpcContainer();
+    const cleanup = vi.fn();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let resolveStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      resolveStarted = resolve;
+    });
+
+    const loading = container.load("profile", async () => {
+      resolveStarted();
+      await gate;
+      return { channels: [["profile:get", cleanup]] };
+    });
+
+    await started;
+    expect(container.unload("profile")).toBe(false);
+    release();
+
+    await expect(loading).rejects.toThrow("was unloaded during registration");
+    expect(cleanup).toHaveBeenCalledOnce();
+    expect(container.has("profile")).toBe(false);
+    expect(container.size).toBe(0);
   });
 
   it("emits loaded event", async () => {
