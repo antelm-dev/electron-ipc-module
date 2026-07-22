@@ -201,7 +201,7 @@ export function createIpcContainer() {
     }
 
     const errors: unknown[] = [];
-    for (const name of [...modules.keys()]) {
+    for (const name of Array.from(modules.keys())) {
       try {
         unload(name);
       } catch (error) {

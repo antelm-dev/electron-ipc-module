@@ -29,11 +29,11 @@ export function createLogger(label: string, level = "info") {
     LEVELS.map((level) => {
       const method = (...args: unknown[]) => {
         const timestamp = new Date().toLocaleTimeString("en-US", {
-          hour: '2-digit',
-          minute: '2-digit',
-          second: '2-digit',
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
           hour12: false,
-          hourCycle: 'h23',
+          hourCycle: "h23",
         });
         console[level](`\x1b[${COLORS[level]}m${timestamp} [${label}]\x1b[0m`, ...args);
       };

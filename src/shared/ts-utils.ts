@@ -53,9 +53,9 @@ export function createTsProgram(tsconfigPath: string) {
     ...program.getOptionsDiagnostics(),
     ...program.getSyntacticDiagnostics(),
     ...program.getGlobalDiagnostics(),
-    ...program.getSemanticDiagnostics().filter(
-      (diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error,
-    ),
+    ...program
+      .getSemanticDiagnostics()
+      .filter((diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error),
   ]);
 
   return program;
@@ -67,10 +67,7 @@ function isIpcModuleRuntimeFile(fileName: string): boolean {
 }
 
 /** Follow import aliases to the underlying value symbol. */
-export function resolveValueSymbol(
-  checker: ts.TypeChecker,
-  node: ts.Node,
-): ts.Symbol | undefined {
+export function resolveValueSymbol(checker: ts.TypeChecker, node: ts.Node): ts.Symbol | undefined {
   const symbol = checker.getSymbolAtLocation(node);
   if (!symbol) return undefined;
   if (symbol.flags & ts.SymbolFlags.Alias) {
