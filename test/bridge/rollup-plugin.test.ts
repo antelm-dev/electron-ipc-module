@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 import ipcBridgePlugin from "../../src/rollup-plugin.js";
 
@@ -38,7 +38,10 @@ describe("ipcBridge rollup plugin", () => {
       tsconfig: FIXTURE_TSCONFIG,
     });
 
-    plugin.buildStart?.({});
+    const addWatchFile = vi.fn();
+    const buildStart =
+      typeof plugin.buildStart === "function" ? plugin.buildStart : plugin.buildStart?.handler;
+    buildStart?.call({ addWatchFile } as never, {} as never);
 
     expect(existsSync(outFile)).toBe(true);
 
@@ -46,5 +49,38 @@ describe("ipcBridge rollup plugin", () => {
     expect(code).toContain("export const bridge = {");
     expect(code).toContain("demo: {");
     expect(code).toContain("withEvents: {");
+    expect(addWatchFile).toHaveBeenCalledWith(FIXTURE_TSCONFIG.replaceAll("\\", "/"));
+    expect(addWatchFile).toHaveBeenCalledWith(FIXTURE_IPC_DIR.replaceAll("\\", "/"));
+    expect(addWatchFile).not.toHaveBeenCalledWith(outFile.replaceAll("\\", "/"));
+  });
+
+  it("ignores unrelated watchChange events when ipcDir is a glob", () => {
+    const plugin = ipcBridgePlugin({
+      ipcDir: join(FIXTURE_IPC_DIR, "*.ipc.ts").replaceAll("\\", "/"),
+      outFile,
+      tsconfig: FIXTURE_TSCONFIG,
+    });
+
+    const addWatchFile = vi.fn();
+    const buildStart =
+      typeof plugin.buildStart === "function" ? plugin.buildStart : plugin.buildStart?.handler;
+    buildStart?.call({ addWatchFile } as never, {} as never);
+
+    expect(addWatchFile).toHaveBeenCalledWith(FIXTURE_IPC_DIR.replaceAll("\\", "/"));
+    expect(existsSync(outFile)).toBe(true);
+
+    const codeAfterFirstBuild = readFileSync(outFile, "utf-8");
+    const watchChange =
+      typeof plugin.watchChange === "function" ? plugin.watchChange : plugin.watchChange?.handler;
+    watchChange?.call({} as never, join(FIXTURE_IPC_DIR, "readme.md"), { event: "create" });
+    buildStart?.call({ addWatchFile } as never, {} as never);
+
+    expect(readFileSync(outFile, "utf-8")).toBe(codeAfterFirstBuild);
+
+    watchChange?.call({} as never, join(FIXTURE_IPC_DIR, "demo.ipc.ts"), { event: "update" });
+    rmSync(outFile);
+    buildStart?.call({ addWatchFile } as never, {} as never);
+
+    expect(existsSync(outFile)).toBe(true);
   });
 });

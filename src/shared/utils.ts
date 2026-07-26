@@ -28,13 +28,12 @@ export function createLogger(label: string, level = "info") {
   return Object.fromEntries(
     LEVELS.map((level) => {
       const method = (...args: unknown[]) => {
-        const timestamp = new Date().toLocaleTimeString('en-US', {
+        const timestamp = new Date().toLocaleTimeString("en-US", {
           hour: "2-digit",
           minute: "2-digit",
           second: "2-digit",
           hour12: false,
-          timeZone: "UTC",
-          timeZoneName: "short",
+          hourCycle: "h23",
         });
         console[level](`\x1b[${COLORS[level]}m${timestamp} [${label}]\x1b[0m`, ...args);
       };
@@ -70,6 +69,15 @@ export function hasGlobMagic(filePath: string) {
 /** Resolve `filePath` to an absolute path with POSIX separators. */
 export function toAbsolutePosix(filePath: string) {
   return toPosixPath(resolve(filePath));
+}
+
+/** Nearest absolute directory ancestor of a path/glob that has no glob magic. */
+export function globWatchRoot(pattern: string) {
+  const normalized = toAbsolutePosix(pattern);
+  const magicIndex = normalized.search(/[*?[\]{}()!]/);
+  if (magicIndex === -1) return normalized;
+  const slashIndex = normalized.lastIndexOf("/", magicIndex);
+  return slashIndex > 0 ? normalized.slice(0, slashIndex) : toAbsolutePosix(".");
 }
 
 /** Build the default `**\/*.ipc.ts` glob for a plain directory. */

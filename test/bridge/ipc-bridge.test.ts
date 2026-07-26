@@ -47,7 +47,7 @@ describe("resolveIpcBridgeOptions", () => {
 });
 
 describe("getIpcBridgeWatchTargets", () => {
-  it("includes tsconfig, out file, and ipc directory for plain dirs", () => {
+  it("includes tsconfig and ipc directory, but not generated output, for plain dirs", () => {
     const options = {
       ipcDir: FIXTURE_IPC_DIR,
       outFile: "./tmp/bridge.ts",
@@ -57,19 +57,19 @@ describe("getIpcBridgeWatchTargets", () => {
     const targets = getIpcBridgeWatchTargets(options);
 
     expect(targets).toContain(resolved.tsconfig);
-    expect(targets).toContain(resolved.outFile);
+    expect(targets).not.toContain(resolved.outFile);
     expect(targets).toContain(toAbsolutePosix(FIXTURE_IPC_DIR));
   });
 
-  it("includes matched ipc files when ipcDir is a glob", () => {
+  it("watches the nearest non-glob ancestor when ipcDir is a glob", () => {
     const globDir = join(FIXTURE_IPC_DIR, "*.ipc.ts").replaceAll("\\", "/");
     const targets = getIpcBridgeWatchTargets({
       ipcDir: globDir,
       tsconfig: FIXTURE_TSCONFIG,
     });
 
-    expect(targets).toContain(toAbsolutePosix(DEMO_IPC_FILE));
-    expect(targets).not.toContain(toAbsolutePosix(FIXTURE_IPC_DIR));
+    expect(targets).toContain(toAbsolutePosix(FIXTURE_IPC_DIR));
+    expect(targets).not.toContain(toAbsolutePosix(DEMO_IPC_FILE));
   });
 });
 
@@ -97,6 +97,20 @@ describe("isIpcBridgeRelevantFile", () => {
 
     expect(isIpcBridgeRelevantFile(DEMO_IPC_FILE, globOptions)).toBe(true);
     expect(isIpcBridgeRelevantFile(SPREAD_IPC_FILE, globOptions)).toBe(false);
+  });
+
+  it("matches newly created or deleted ipc files against a glob without scanning disk", () => {
+    const globOptions = {
+      ipcDir: `${toAbsolutePosix(FIXTURE_IPC_DIR)}/*.ipc.ts`,
+      tsconfig: FIXTURE_TSCONFIG,
+    };
+
+    expect(isIpcBridgeRelevantFile(join(FIXTURE_IPC_DIR, "brand-new.ipc.ts"), globOptions)).toBe(
+      true,
+    );
+    expect(isIpcBridgeRelevantFile(join(FIXTURE_IPC_DIR, "nested/x.ipc.ts"), globOptions)).toBe(
+      false,
+    );
   });
 });
 
@@ -155,6 +169,20 @@ describe("runIpcBridgeGeneration", () => {
     expect(second.code).toBe(first.code);
     expect(readFileSync(outFile, "utf-8")).toBe(first.code);
     expect(readFileSync(outFile).length).toBe(mtimeMs);
+  });
+
+  it("can check for stale output without writing it", () => {
+    const result = runIpcBridgeGeneration(
+      {
+        ipcDir: FIXTURE_IPC_DIR,
+        outFile,
+        tsconfig: FIXTURE_TSCONFIG,
+      },
+      { write: false },
+    );
+
+    expect(result.changed).toBe(true);
+    expect(existsSync(outFile)).toBe(false);
   });
 
   it("reports spread warnings for channels using object spread", () => {

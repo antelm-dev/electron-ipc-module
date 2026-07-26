@@ -4,6 +4,7 @@ import {
   handleOnce,
   listen,
   listenOnce,
+  IpcAuthorizationError,
 } from "../../src/runtime/ipc-module.js";
 import { vi, describe, it, expect } from "vitest";
 
@@ -38,7 +39,6 @@ describe("defineIpcModule", () => {
         notify: listenOnce(() => undefined),
       },
       {
-        cleanup,
         ready,
       },
     );
@@ -105,6 +105,177 @@ describe("defineIpcModule", () => {
     })(ipc as never);
 
     expect(ipc.handle).toHaveBeenCalledWith("ping", expect.any(Function));
+  });
+
+  it("authorizes and validates handler calls before invoking user code", async () => {
+    const { handlers, ipc } = createIpc();
+    const authorize = vi.fn(() => true);
+    const validate = vi.fn();
+    const handler = vi.fn((_event, value: string) => value.toUpperCase());
+
+    await defineIpcModule(
+      "secure",
+      { save: handle(handler) },
+      { authorize, validate: { save: validate } },
+    )(ipc as never);
+
+    const event = { sender: {}, senderFrame: null };
+    await expect(handlers.get("secure:save")?.(event, "ok")).resolves.toBe("OK");
+    expect(authorize).toHaveBeenCalledWith(event, {
+      channel: "secure:save",
+      key: "save",
+      prefix: "secure",
+    });
+    expect(validate).toHaveBeenCalledWith(["ok"], event, expect.any(Object));
+  });
+
+  it("rejects unauthorized handler calls", async () => {
+    const { handlers, ipc } = createIpc();
+    const handler = vi.fn();
+    await defineIpcModule(
+      "secure",
+      { read: handle(handler) },
+      { authorize: () => false },
+    )(ipc as never);
+
+    await expect(
+      handlers.get("secure:read")?.({ sender: {}, senderFrame: null }),
+    ).rejects.toBeInstanceOf(IpcAuthorizationError);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("preserves validation failures and does not invoke the handler", async () => {
+    const { handlers, ipc } = createIpc();
+    const error = new TypeError("invalid payload");
+    const handler = vi.fn();
+    await defineIpcModule(
+      "secure",
+      { save: handle(handler) },
+      {
+        validate: {
+          save: () => {
+            throw error;
+          },
+        },
+      },
+    )(ipc as never);
+
+    await expect(handlers.get("secure:save")?.({ sender: {}, senderFrame: null })).rejects.toBe(
+      error,
+    );
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("preserves registration collisions and rolls back earlier channels", async () => {
+    const { handlers, ipc } = createIpc();
+    const collision = new Error("handler already registered");
+    ipc.handle
+      .mockImplementationOnce((channel, fn) => handlers.set(channel, fn))
+      .mockImplementationOnce(() => {
+        throw collision;
+      });
+
+    await expect(
+      defineIpcModule("demo", {
+        first: handle(() => undefined),
+        second: handle(() => undefined),
+      })(ipc as never),
+    ).rejects.toBe(collision);
+
+    expect(ipc.removeHandler).toHaveBeenCalledOnce();
+    expect(ipc.removeHandler).toHaveBeenCalledWith("demo:first");
+  });
+
+  it("routes unauthorized listen failures to onListenerError", async () => {
+    const { listeners, ipc } = createIpc();
+    const listener = vi.fn();
+    const onListenerError = vi.fn();
+    const event = { sender: {}, senderFrame: null };
+
+    await defineIpcModule(
+      "secure",
+      { notify: listen(listener) },
+      { authorize: async () => false, onListenerError },
+    )(ipc as never);
+
+    listeners.get("secure:notify")?.(event, "payload");
+    await vi.waitFor(() => expect(onListenerError).toHaveBeenCalledOnce());
+
+    expect(onListenerError.mock.calls[0]?.[0]).toBeInstanceOf(IpcAuthorizationError);
+    expect(onListenerError.mock.calls[0]?.[1]).toEqual({
+      channel: "secure:notify",
+      key: "notify",
+      prefix: "secure",
+    });
+    expect(onListenerError.mock.calls[0]?.[2]).toBe(event);
+    expect(listener).not.toHaveBeenCalled();
+  });
+
+  it("catches rejected listen promises without unhandled rejections", async () => {
+    const { listeners, ipc } = createIpc();
+    const error = new Error("listener failed");
+    const onListenerError = vi.fn();
+    const rejectionHandler = vi.fn();
+    process.on("unhandledRejection", rejectionHandler);
+
+    try {
+      await defineIpcModule(
+        "demo",
+        {
+          notify: listen(async () => {
+            throw error;
+          }),
+        },
+        { onListenerError },
+      )(ipc as never);
+
+      listeners.get("demo:notify")?.({ sender: {}, senderFrame: null });
+      await vi.waitFor(() =>
+        expect(onListenerError).toHaveBeenCalledWith(error, expect.any(Object), expect.any(Object)),
+      );
+      await Promise.resolve();
+      expect(rejectionHandler).not.toHaveBeenCalled();
+    } finally {
+      process.off("unhandledRejection", rejectionHandler);
+    }
+  });
+
+  it("logs listen failures when onListenerError is omitted", async () => {
+    const { listeners, ipc } = createIpc();
+    const error = new Error("boom");
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    try {
+      await defineIpcModule(
+        "demo",
+        {
+          notify: listen(async () => {
+            throw error;
+          }),
+        },
+        { authorize: () => true },
+      )(ipc as never);
+
+      listeners.get("demo:notify")?.({ sender: {}, senderFrame: null });
+      await vi.waitFor(() => expect(consoleError).toHaveBeenCalled());
+      expect(consoleError.mock.calls[0]?.[0]).toContain("demo:notify");
+      expect(consoleError.mock.calls[0]?.[1]).toBe(error);
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it("optionally namespaces emitted renderer events", async () => {
+    const { handlers, ipc } = createIpc();
+    const send = vi.fn();
+    await defineIpcModule(
+      "profile",
+      { save: handle((event) => event.sender.send("updated", "id")) },
+      { eventPrefix: true },
+    )(ipc as never);
+
+    await handlers.get("profile:save")?.({ sender: { send }, senderFrame: null });
+    expect(send).toHaveBeenCalledWith("profile:updated", "id");
   });
 
   it("registers handlers that can be invoked with args and return values", async () => {

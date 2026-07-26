@@ -1,6 +1,33 @@
 import type { AnalyzedIpcModule, ChannelInfo, EmittedEventInfo } from "../shared/types/bridge.js";
 import { toCamelCase, toPascalCase } from "../shared/utils.js";
 
+const IDENTIFIER_PATTERN = /^[$A-Z_a-z][$\w]*$/;
+
+function assertIdentifier(identifier: string, description: string) {
+  if (!IDENTIFIER_PATTERN.test(identifier)) {
+    throw new Error(
+      `${description} produces invalid bridge identifier ${JSON.stringify(identifier)}`,
+    );
+  }
+}
+
+function assertUniqueIdentifiers(
+  entries: Array<[identifier: string, source: string]>,
+  scope: string,
+) {
+  const seen = new Map<string, string>();
+  for (const [identifier, source] of entries) {
+    assertIdentifier(identifier, source);
+    const previous = seen.get(identifier);
+    if (previous) {
+      throw new Error(
+        `${scope} contains a generated identifier collision for ${JSON.stringify(identifier)}: ${previous} and ${source}`,
+      );
+    }
+    seen.set(identifier, source);
+  }
+}
+
 /** The `electron` import line, including `IpcRendererEvent` when events exist. */
 function generateImportLine(hasEmittedEvents: boolean) {
   return hasEmittedEvents
@@ -53,11 +80,11 @@ function generateChannelEntry(channel: ChannelInfo, prefix: string) {
 }
 
 /** The `on<Event>` / `once<Event>` subscription methods for one emitted event. */
-function generateEventEntries(event: EmittedEventInfo) {
+function generateEventEntries(event: EmittedEventInfo, eventPrefix?: string) {
   const argsType = event.argsType ?? "[]";
   const listenerType = event.argsType ? `(...args: ${event.argsType}) => void` : "() => void";
   const pascalKey = toPascalCase(event.key);
-  const channel = JSON.stringify(event.key);
+  const channel = JSON.stringify(eventPrefix ? `${eventPrefix}:${event.key}` : event.key);
 
   return [
     `    on${pascalKey}: (listener: ${listenerType}): Unsubscribe => createOnHelper<${argsType}>(${channel}, listener)`,
@@ -67,9 +94,30 @@ function generateEventEntries(event: EmittedEventInfo) {
 
 /** The `name: { … }` block grouping a module's channels and event helpers. */
 function generateModuleEntry(ipcModule: AnalyzedIpcModule) {
+  assertUniqueIdentifiers(
+    [
+      ...ipcModule.channels.map(
+        (channel) =>
+          [toCamelCase(channel.key), `channel ${JSON.stringify(channel.key)}`] as [string, string],
+      ),
+      ...ipcModule.emittedEvents.flatMap((event) => [
+        [`on${toPascalCase(event.key)}`, `event ${JSON.stringify(event.key)} on-listener`] as [
+          string,
+          string,
+        ],
+        [`once${toPascalCase(event.key)}`, `event ${JSON.stringify(event.key)} once-listener`] as [
+          string,
+          string,
+        ],
+      ]),
+    ],
+    `IPC module ${JSON.stringify(ipcModule.name)}`,
+  );
   const channelEntries = [
     ...ipcModule.channels.map((channel) => generateChannelEntry(channel, ipcModule.prefix)),
-    ...ipcModule.emittedEvents.flatMap(generateEventEntries),
+    ...ipcModule.emittedEvents.flatMap((event) =>
+      generateEventEntries(event, ipcModule.eventPrefix),
+    ),
   ];
 
   return `  ${toCamelCase(ipcModule.name)}: {\n${channelEntries.join(",\n")},\n  }`;
@@ -80,6 +128,13 @@ function generateModuleEntry(ipcModule: AnalyzedIpcModule) {
  * helpers (when needed), and a `bridge` object with one entry per module.
  */
 export function generateBridge(modules: AnalyzedIpcModule[]) {
+  assertUniqueIdentifiers(
+    modules.map((ipcModule) => [
+      toCamelCase(ipcModule.name),
+      `module file ${JSON.stringify(ipcModule.name + ".ipc.ts")}`,
+    ]),
+    "IPC bridge",
+  );
   const hasEmittedEvents = modules.some((ipcModule) => ipcModule.emittedEvents.length > 0);
   const lines = [generateImportLine(hasEmittedEvents), ""];
 

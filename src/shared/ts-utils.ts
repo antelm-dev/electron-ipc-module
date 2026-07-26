@@ -9,28 +9,122 @@ import type { EmittedEventInfo } from "./types/bridge.js";
 export const SERIALIZE_FLAGS =
   ts.TypeFormatFlags.NoTruncation | ts.TypeFormatFlags.UseFullyQualifiedType;
 
-/** Build a TypeScript program from a tsconfig path, resolving its file list. */
-export function createTsProgram(tsconfigPath: string) {
-  const abs = resolve(tsconfigPath);
-  const configFile = ts.readConfigFile(abs, (filePath) => readFileSync(filePath, "utf-8"));
-  const basePath = dirname(abs);
-  const parsed = ts.parseJsonConfigFileContent(configFile.config, ts.sys, basePath);
-  return ts.createProgram(parsed.fileNames, parsed.options);
+const formatHost: ts.FormatDiagnosticsHost = {
+  getCanonicalFileName: (fileName) => fileName,
+  getCurrentDirectory: () => ts.sys.getCurrentDirectory(),
+  getNewLine: () => ts.sys.newLine,
+};
+
+function formatDiagnostics(diagnostics: readonly ts.Diagnostic[]) {
+  return ts.formatDiagnostics(diagnostics, formatHost).trimEnd();
 }
 
-/** Depth-first search for the first call expression to `fnName(...)`. */
-export function findCallTo(node: ts.Node, fnName: string): ts.CallExpression | undefined {
-  if (
-    ts.isCallExpression(node) &&
-    ts.isIdentifier(node.expression) &&
-    node.expression.text === fnName
-  ) {
+function assertNoDiagnostics(diagnostics: readonly ts.Diagnostic[]) {
+  const errors = diagnostics.filter(
+    (diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error,
+  );
+  if (errors.length === 0) return;
+  throw new Error(
+    `TypeScript failed with ${errors.length} error(s):\n${formatDiagnostics(errors)}`,
+  );
+}
+
+/** Build a TypeScript program from a tsconfig path, resolving its file list. */
+export function createTsProgram(tsconfigPath: string) {
+  const abs = resolve(tsconfigPath).replace(/\\/g, "/");
+  const configFile = ts.readConfigFile(abs, (filePath) => readFileSync(filePath, "utf-8"));
+  if (configFile.error) {
+    assertNoDiagnostics([configFile.error]);
+  }
+
+  const basePath = dirname(abs);
+  const parsed = ts.parseJsonConfigFileContent(configFile.config, ts.sys, basePath, undefined, abs);
+  assertNoDiagnostics(parsed.errors);
+
+  const program = ts.createProgram({
+    rootNames: parsed.fileNames,
+    options: parsed.options,
+    projectReferences: parsed.projectReferences,
+    configFileParsingDiagnostics: parsed.errors,
+  });
+
+  assertNoDiagnostics([
+    ...program.getConfigFileParsingDiagnostics(),
+    ...program.getOptionsDiagnostics(),
+    ...program.getSyntacticDiagnostics(),
+    ...program.getGlobalDiagnostics(),
+    ...program
+      .getSemanticDiagnostics()
+      .filter((diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error),
+  ]);
+
+  return program;
+}
+
+/** Canonical runtime file that declares `defineIpcModule` / helpers / events. */
+function isIpcModuleRuntimeFile(fileName: string): boolean {
+  return /(?:^|[/\\])runtime[/\\]ipc-module\.(?:d\.)?[cm]?ts$/.test(fileName);
+}
+
+/** Follow import aliases to the underlying value symbol. */
+export function resolveValueSymbol(checker: ts.TypeChecker, node: ts.Node): ts.Symbol | undefined {
+  const symbol = checker.getSymbolAtLocation(node);
+  if (!symbol) return undefined;
+  if (symbol.flags & ts.SymbolFlags.Alias) {
+    return checker.getAliasedSymbol(symbol);
+  }
+  return symbol;
+}
+
+/**
+ * Whether `symbol` is the package export `exportName` from
+ * `runtime/ipc-module` (not a same-named local or third-party binding).
+ */
+export function isIpcModuleExportSymbol(
+  symbol: ts.Symbol | undefined,
+  exportName: string,
+): boolean {
+  if (!symbol || symbol.getName() !== exportName) return false;
+  return (symbol.getDeclarations() ?? []).some((declaration) =>
+    isIpcModuleRuntimeFile(declaration.getSourceFile().fileName),
+  );
+}
+
+/** Callee name node for `fn(...)` or `ns.fn(...)`. */
+function getCalleeNameNode(expression: ts.Expression): ts.MemberName | undefined {
+  if (ts.isIdentifier(expression) || ts.isPrivateIdentifier(expression)) {
+    return expression;
+  }
+  if (ts.isPropertyAccessExpression(expression)) {
+    return expression.name;
+  }
+  return undefined;
+}
+
+/** Whether a call expression targets the package export `exportName`. */
+export function isCallToExport(
+  checker: ts.TypeChecker,
+  call: ts.CallExpression,
+  exportName: string,
+): boolean {
+  const nameNode = getCalleeNameNode(call.expression);
+  if (!nameNode) return false;
+  return isIpcModuleExportSymbol(resolveValueSymbol(checker, nameNode), exportName);
+}
+
+/** Depth-first search for the first call to the package export `exportName`. */
+export function findCallTo(
+  checker: ts.TypeChecker,
+  node: ts.Node,
+  exportName: string,
+): ts.CallExpression | undefined {
+  if (ts.isCallExpression(node) && isCallToExport(checker, node, exportName)) {
     return node;
   }
 
   let found: ts.CallExpression | undefined;
   ts.forEachChild(node, (child) => {
-    found ??= findCallTo(child, fnName);
+    found ??= findCallTo(checker, child, exportName);
   });
   return found;
 }
@@ -51,24 +145,26 @@ export function unwrapExpression(expression: ts.Expression): ts.Expression {
   return current;
 }
 
-/** Return the underlying `fnName(...)` call if `expression` is one, else `undefined`. */
-export function getCallToIdentifier(expression: ts.Expression, fnName: string) {
+/** Return the underlying package-export call if `expression` is one, else `undefined`. */
+export function getCallToExport(
+  checker: ts.TypeChecker,
+  expression: ts.Expression,
+  exportName: string,
+) {
   const unwrapped = unwrapExpression(expression);
-
-  if (
-    ts.isCallExpression(unwrapped) &&
-    ts.isIdentifier(unwrapped.expression) &&
-    unwrapped.expression.text === fnName
-  ) {
+  if (ts.isCallExpression(unwrapped) && isCallToExport(checker, unwrapped, exportName)) {
     return unwrapped;
   }
-
   return undefined;
 }
 
-/** Whether `expression` is a call to `fnName(...)` (after unwrapping). */
-export function isCallToIdentifier(expression: ts.Expression, fnName: string) {
-  return Boolean(getCallToIdentifier(expression, fnName));
+/** Whether `expression` is a call to the package export `exportName` (after unwrapping). */
+export function isCallToExportExpression(
+  checker: ts.TypeChecker,
+  expression: ts.Expression,
+  exportName: string,
+) {
+  return Boolean(getCallToExport(checker, expression, exportName));
 }
 
 /**
