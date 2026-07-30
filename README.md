@@ -1,5 +1,9 @@
 # electron-ipc-module
 
+[![npm](https://img.shields.io/npm/v/electron-ipc-module?logo=npm)](https://www.npmjs.com/package/electron-ipc-module)
+[![CI](https://github.com/antelm-dev/electron-ipc-module/actions/workflows/ci.yml/badge.svg)](https://github.com/antelm-dev/electron-ipc-module/actions/workflows/ci.yml)
+[![License](https://img.shields.io/npm/l/electron-ipc-module)](LICENSE)
+
 Modular, type-safe IPC for Electron. Declare handlers in the main process, load them with lifecycle management, and auto-generate a typed preload bridge for the renderer.
 
 ## Features
