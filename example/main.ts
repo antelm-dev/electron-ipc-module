@@ -1,4 +1,6 @@
 import { app, BrowserWindow } from "electron";
+import { fileURLToPath } from "node:url";
+
 import { createIpcContainer } from "electron-ipc-module";
 import { createGreetingIpc } from "./ipc/greeting.ipc.js";
 
@@ -13,11 +15,11 @@ async function createWindow() {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
-      preload: new URL("./preload.js", import.meta.url).pathname,
+      preload: fileURLToPath(new URL("./preload.js", import.meta.url)),
     },
   });
 
-  await window.loadFile(new URL("../renderer/index.html", import.meta.url).pathname);
+  await window.loadFile(fileURLToPath(new URL("../renderer/index.html", import.meta.url)));
 }
 
 app.whenReady().then(createWindow);
