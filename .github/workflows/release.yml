@@ -1,0 +1,47 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  id-token: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - id: release
+        uses: googleapis/release-please-action@v5
+        with:
+          release-type: node
+
+      - uses: actions/checkout@v6
+        if: ${{ steps.release.outputs.release_created == 'true' }}
+        with:
+          ref: ${{ steps.release.outputs.tag_name }}
+
+      - uses: pnpm/action-setup@v4
+        if: ${{ steps.release.outputs.release_created == 'true' }}
+        with:
+          version: 9.15.9
+
+      - uses: actions/setup-node@v6
+        if: ${{ steps.release.outputs.release_created == 'true' }}
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          cache: pnpm
+
+      - run: corepack enable
+        if: ${{ steps.release.outputs.release_created == 'true' }}
+      - run: pnpm install --frozen-lockfile
+        if: ${{ steps.release.outputs.release_created == 'true' }}
+      - run: pnpm run check
+        if: ${{ steps.release.outputs.release_created == 'true' }}
+      - run: npm publish --access public
+        if: ${{ steps.release.outputs.release_created == 'true' }}
