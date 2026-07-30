@@ -40,10 +40,6 @@
       "types": "./dist/rollup-plugin.d.ts",
       "import": "./dist/rollup-plugin.js"
     },
-    "./vite-plugin": {
-      "types": "./dist/rollup-plugin.d.ts",
-      "import": "./dist/rollup-plugin.js"
-    },
     "./generator": {
       "types": "./dist/bridge/ipc-bridge.d.ts",
       "import": "./dist/bridge/ipc-bridge.js"
