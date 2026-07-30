@@ -116,6 +116,16 @@ window.ipc.profile.onProfileUpdated((profile) => {
 });
 ```
 
+## Example
+
+[`example/`](./example) is a small, runnable Electron application with one typed IPC module. It shows an invocation, renderer-to-main messages, main-to-renderer events, generated bridge methods, and context-isolated preload exposure.
+
+```bash
+cd example
+pnpm install
+pnpm start
+```
+
 ## API
 
 ### Runtime (`electron-ipc-module`)

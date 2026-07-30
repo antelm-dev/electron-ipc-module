@@ -1,0 +1,17 @@
+{
+  "name": "electron-ipc-module-example",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "generate": "electron-ipc-module generate --ipc-dir ./ipc --out-file ./generated/ipc-bridge.ts --tsconfig ./tsconfig.ipc.json",
+    "build": "pnpm run generate && tsc -p tsconfig.json",
+    "start": "pnpm run build && electron ./dist/main.js"
+  },
+  "dependencies": {
+    "electron-ipc-module": "file:.."
+  },
+  "devDependencies": {
+    "electron": "^43.2.0",
+    "typescript": "^5.8.3"
+  }
+}
