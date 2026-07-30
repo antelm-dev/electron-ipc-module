@@ -40,7 +40,6 @@ import {
 import ipcBridge, {
   type IpcBridgeOptions as PluginOptions,
 } from "electron-ipc-module/rollup-plugin";
-import viteIpcBridge from "electron-ipc-module/vite-plugin";
 import {
   getIpcBridgeWatchTargets,
   isIpcBridgeRelevantFile,
@@ -89,7 +88,6 @@ new IpcContainerDisposedError();
 
 const pluginOptions: PluginOptions = { ipcDir: "./ipc" };
 ipcBridge(pluginOptions);
-viteIpcBridge(pluginOptions);
 resolveIpcBridgeOptions(pluginOptions);
 getIpcBridgeWatchTargets(pluginOptions);
 isIpcBridgeRelevantFile("module.ipc.ts", pluginOptions);
