@@ -1,0 +1,65 @@
+# Contributing to electron-ipc-module
+
+Thanks for helping improve `electron-ipc-module`.
+
+## Development setup
+
+- Use Node.js `20` or `>=22` and pnpm `9.15.9` (Corepack is recommended).
+- Install dependencies with `pnpm install --frozen-lockfile`.
+- Build the package with `pnpm run build`.
+
+## Making changes
+
+1. Fork the repository and create a focused branch from the default branch.
+2. Read the [0.1 compatibility contract](README.md#01-compatibility-contract) in the README before changing runtime or module support. ESM-only support, supported Node.js and Electron versions, and public package paths are deliberate boundaries.
+3. Keep public API changes intentional: the supported package entry points are documented in the README.
+4. Open an issue to discuss a large feature, broad refactor, or API change before investing in a pull request.
+5. Add or update tests in `test/` for every behavior change. Keep fixture IPC modules under `test/fixtures/` when testing bridge analysis or generation.
+6. Update the README when a user-facing API, option, or workflow changes.
+
+Source code is organized by responsibility:
+
+- `src/runtime/` contains main-process IPC module and container behavior.
+- `src/bridge/` contains preload bridge analysis and generation.
+- `src/shared/` contains shared types and utilities.
+
+## Quality checks
+
+Run the complete validation suite before opening a pull request:
+
+```bash
+pnpm run check
+```
+
+Useful individual commands:
+
+```bash
+pnpm run test
+pnpm run test:watch
+pnpm run typecheck
+pnpm run lint
+pnpm run fmt:check
+pnpm run test:api
+```
+
+Use `pnpm run fmt` or `pnpm run lint:fix` to apply automatic fixes where appropriate.
+
+## Commits and pull requests
+
+Commits must follow the Conventional Commits format, for example:
+
+```text
+feat: add bridge validation hook
+fix: preserve listener cleanup order
+docs: clarify generator options
+```
+
+Keep pull requests small and describe the problem, the solution, and the tests you ran. CI validates commit messages and runs the checks on Node.js 20 and 22 against the supported Electron test matrix.
+
+## Reporting issues
+
+Please include a minimal reproduction, expected and actual behavior, your Node.js and Electron versions, and any relevant configuration. Do not include secrets, tokens, or private application code.
+
+## License
+
+By contributing, you agree that your contributions are licensed under this repository's MIT License.
