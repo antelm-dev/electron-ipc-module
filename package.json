@@ -61,7 +61,7 @@
     "prepack": "pnpm run check && pnpm run build"
   },
   "dependencies": {
-    "glob": "^11.0.3"
+    "glob": "^13.0.6"
   },
   "devDependencies": {
     "@commitlint/cli": "^21.2.1",
