@@ -66,13 +66,13 @@
   "devDependencies": {
     "@commitlint/cli": "^21.2.1",
     "@commitlint/config-conventional": "^21.2.0",
-    "@types/node": "^22.8.6",
+    "@types/node": "^26.1.2",
     "electron": "^43.2.0",
-    "oxfmt": "^0.57.0",
+    "oxfmt": "^0.61.0",
     "oxlint": "^1.72.0",
     "rollup": "^4.17.2",
-    "typescript": "^5.8.3",
-    "vite": "^7.3.6",
+    "typescript": "^7.0.2",
+    "vite": "^8.1.5",
     "vitest": "^4.1.9"
   },
   "peerDependencies": {
