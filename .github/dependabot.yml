@@ -11,3 +11,6 @@ updates:
     groups:
       dev-dependencies:
         dependency-type: development
+        # majors get their own PR — src/shared/ts-utils.ts uses the TS compiler
+        # API, so a grouped major bump takes the whole PR down with it
+        update-types: [minor, patch]
