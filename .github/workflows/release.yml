@@ -5,43 +5,49 @@ on:
     branches:
       - main
 
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 permissions:
-  contents: write
-  pull-requests: write
-  issues: write
-  id-token: write
+  contents: read
 
 jobs:
-  release:
+  release-please:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    outputs:
+      released: ${{ steps.release.outputs.release_created }}
+      tag: ${{ steps.release.outputs.tag_name }}
     steps:
       - id: release
         uses: googleapis/release-please-action@v5
         with:
           release-type: node
 
+  publish:
+    needs: release-please
+    if: needs.release-please.outputs.released == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # npm trusted publishing / provenance
+    environment: npm
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+    steps:
       - uses: actions/checkout@v6
-        if: ${{ steps.release.outputs.release_created == 'true' }}
         with:
-          ref: ${{ steps.release.outputs.tag_name }}
-
+          ref: ${{ needs.release-please.outputs.tag }}
       - uses: pnpm/action-setup@v4
-        if: ${{ steps.release.outputs.release_created == 'true' }}
-        with:
-          version: 9.15.9
-
       - uses: actions/setup-node@v6
-        if: ${{ steps.release.outputs.release_created == 'true' }}
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
           cache: pnpm
-
-      - run: corepack enable
-        if: ${{ steps.release.outputs.release_created == 'true' }}
       - run: pnpm install --frozen-lockfile
-        if: ${{ steps.release.outputs.release_created == 'true' }}
-      - run: pnpm run check
-        if: ${{ steps.release.outputs.release_created == 'true' }}
+      # `prepack` already runs `check && build` on publish
       - run: npm publish --access public
-        if: ${{ steps.release.outputs.release_created == 'true' }}
