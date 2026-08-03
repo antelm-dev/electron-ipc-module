@@ -29,7 +29,7 @@ npm install electron-ipc-module
 - **Modules:** ESM only. Use `import`; CommonJS `require()` is not a supported entry point.
 - **Node.js:** Node 20 and every even/odd release from Node 22 onward (`20 || >=22`). CI covers Node 20 and 22.
 - **Electron:** `electron >=12` is an API-compatibility claim, not a promise that every old Electron release is continuously tested or supported upstream. CI covers the latest patch of Electron's three currently supported stable majors (41, 42, and 43 when this contract was frozen). The matrix advances with [Electron's latest-three-stable support policy](https://www.electronjs.org/docs/latest/tutorial/electron-timelines).
-- **Package paths:** only `.`, `./rollup-plugin`, `./vite-plugin`, and `./generator` are public. Files under `dist/` are implementation details.
+- **Package paths:** only `.`, `./rollup-plugin`, and `./generator` are public. Files under `dist/` are implementation details.
 
 ## Quick start
 
@@ -255,7 +255,7 @@ Analyzes `*.ipc.ts` files and generates a typed bridge for the renderer.
 - Avoid spreads in the channels object for complete bridge typing
 - Use a string literal for the module prefix so build-time and runtime channel names cannot diverge
 
-The plugin also implements Vite's compatible plugin API and is available as `electron-ipc-module/vite-plugin`.
+The plugin also implements Vite's compatible plugin API, so the same `electron-ipc-module/rollup-plugin` import works in a Vite config.
 
 ### Generator CLI
 
