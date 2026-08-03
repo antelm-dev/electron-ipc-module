@@ -15,7 +15,10 @@ async function createWindow() {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
-      preload: fileURLToPath(new URL("./preload.js", import.meta.url)),
+      // Electron's default since v20. Set explicitly because it constrains the
+      // preload build: sandboxed preloads must be a single CommonJS file.
+      sandbox: true,
+      preload: fileURLToPath(new URL("./preload.cjs", import.meta.url)),
     },
   });
 

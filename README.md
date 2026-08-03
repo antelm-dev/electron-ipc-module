@@ -116,6 +116,17 @@ window.ipc.profile.onProfileUpdated((profile) => {
 });
 ```
 
+## Preload constraints
+
+The generated bridge is a preload-side file, and preload scripts have loader rules of their own. They are Electron's rules, not this package's, but they decide how you build the generated file — get them wrong and the preload fails to load with `SyntaxError: Cannot use import statement outside a module` and a renderer whose `window.ipc` is `undefined`.
+
+- **Sandboxed preloads are CommonJS-only.** Electron sandboxes renderers by default since v20. A sandboxed preload runs in a restricted loader with no module resolution: it must be a **single self-contained CommonJS file**. Emitting ESM — which is what `tsc` produces in a `"type": "module"` package — does not work, and neither does splitting the bridge into a separate file the preload imports at runtime. Bundle the preload.
+- **`electron` stays external.** The sandbox shim provides `electron` (plus `events`, `timers`, and `url`). Mark it external in your bundler rather than trying to inline it. The generated bridge imports nothing else, so no other module needs resolving.
+- **ESM preloads require opting out of the sandbox.** Electron supports an ESM preload only with `sandbox: false` and an `.mjs` extension. That trades a real security boundary for a build convenience — prefer bundling to CJS.
+- **`contextIsolation: true` and `nodeIntegration: false`** are assumed by the generated bridge and are the defaults. The runtime does not verify them.
+
+[`example/`](./example) builds its preload this way with `tsc` plus a nine-line Rollup config, and runs under `sandbox: true`.
+
 ## Example
 
 [`example/`](./example) is a small, runnable Electron application with one typed IPC module. It shows an invocation, renderer-to-main messages, main-to-renderer events, generated bridge methods, and context-isolated preload exposure.
