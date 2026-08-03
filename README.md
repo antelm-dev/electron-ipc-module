@@ -6,13 +6,32 @@
 
 Modular, type-safe IPC for Electron. Declare handlers in the main process, load them with lifecycle management, and auto-generate a typed preload bridge for the renderer.
 
+## Contents
+
+- [Features](#features)
+- [Installation](#installation)
+- [Compatibility contract](#compatibility-contract)
+- [Quick start](#quick-start)
+- [Preload constraints](#preload-constraints)
+- [Example](#example)
+- [API](#api)
+  - [Runtime](#runtime-electron-ipc-module)
+  - [Boundaries and caveats](#boundaries-and-caveats)
+  - [Error contract](#error-contract)
+  - [Intentional public exports](#intentional-public-exports)
+  - [Rollup plugin](#rollup-plugin-electron-ipc-modulerollup-plugin)
+  - [Generator CLI](#generator-cli)
+- [Security model](#security-model)
+- [Recommended layout](#recommended-layout)
+
 ## Features
 
 - Compact API for `ipcMain.handle`, `handleOnce`, `on`, and `once`
 - Automatic channel prefixing (`profile:get`, `profile:save`, …)
 - Typed renderer events via `reply`, `sender.send`, and `senderFrame.send`
-- Container to load, unload, and observe multiple IPC modules
+- Container to load, unload, and observe multiple IPC modules, with channel-collision detection and transactional rollback
 - Rollup plugin that generates a typed `ipcRenderer` bridge from `*.ipc.ts` files
+- Generated types model the structured clone boundary, so unserializable payloads fail to compile
 - Runtime authorization and payload-validation hooks
 - Standalone generate/check/watch CLI
 
@@ -22,13 +41,13 @@ Modular, type-safe IPC for Electron. Declare handlers in the main process, load 
 npm install electron-ipc-module
 ```
 
-**Peer dependency:** `electron >= 12`
+**Peer dependency:** `electron >= 41` (see the [compatibility contract](#compatibility-contract))
 
-## 0.1 compatibility contract
+## Compatibility contract
 
-- **Modules:** ESM only. Use `import`; CommonJS `require()` is not a supported entry point.
+- **Modules:** ESM only. Use `import`; CommonJS `require()` is not a supported entry point. This applies to the package itself — your preload output is a separate question, covered in [preload constraints](#preload-constraints).
 - **Node.js:** Node 20 and every even/odd release from Node 22 onward (`20 || >=22`). CI covers Node 20 and 22.
-- **Electron:** `electron >=12` is an API-compatibility claim, not a promise that every old Electron release is continuously tested or supported upstream. CI covers the latest patch of Electron's three currently supported stable majors (41, 42, and 43 when this contract was frozen). The matrix advances with [Electron's latest-three-stable support policy](https://www.electronjs.org/docs/latest/tutorial/electron-timelines).
+- **Electron:** the peer range is `>=41`, which is exactly what CI tests: the latest patch of Electron's three currently supported stable majors (41, 42, and 43 when this contract was frozen). The matrix advances with [Electron's latest-three-stable support policy](https://www.electronjs.org/docs/latest/tutorial/electron-timelines). Nothing here uses an API newer than Electron 12, so overriding the peer range to run against an older major will very likely work — it is simply untested.
 - **Package paths:** only `.`, `./rollup-plugin`, and `./generator` are public. Files under `dist/` are implementation details.
 
 ## Quick start
@@ -68,6 +87,8 @@ This registers:
 - `profile:save` → `ipcRenderer.invoke`
 - `profile:open-editor` → `ipcRenderer.send`
 
+Return plain data from handlers. Class instances and functions do not survive the IPC boundary — see [what survives the boundary](#what-survives-the-boundary).
+
 ### 2. Load modules in main
 
 ```ts
@@ -98,16 +119,36 @@ export default {
 };
 ```
 
+Commit the generated file — see [generator CLI](#generator-cli) for why, and how to keep it honest in CI.
+
 ### 4. Expose the bridge in preload
 
 ```ts
+// main/preload.ts
 import { contextBridge } from "electron";
-import { bridge } from "./generated/ipc-bridge";
+import { bridge } from "./generated/ipc-bridge.js";
 
 contextBridge.exposeInMainWorld("ipc", bridge);
 ```
 
-### 5. Call from the renderer
+**This file must be built to a single CommonJS file.** Electron sandboxes renderers by default, and a sandboxed preload cannot load ESM or resolve modules. Read [preload constraints](#preload-constraints) before wiring up your build — getting it wrong leaves `window.ipc` undefined at runtime.
+
+### 5. Type `window.ipc` in the renderer
+
+The generated bridge is the single source of truth for the renderer's API, so derive the global from it rather than hand-writing a duplicate:
+
+```ts
+// renderer/ipc.d.ts
+import type { bridge } from "../main/generated/ipc-bridge.js";
+
+declare global {
+  interface Window {
+    ipc: typeof bridge;
+  }
+}
+```
+
+### 6. Call from the renderer
 
 ```ts
 const profile = await window.ipc.profile.get("abc-123");
@@ -115,6 +156,19 @@ window.ipc.profile.onProfileUpdated((profile) => {
   console.log("updated", profile);
 });
 ```
+
+`onProfileUpdated` returns an unsubscribe function — call it when the component unmounts.
+
+## Preload constraints
+
+The generated bridge is a preload-side file, and preload scripts have loader rules of their own. They are Electron's rules, not this package's, but they decide how you build the generated file. Get them wrong and the preload fails to load with `SyntaxError: Cannot use import statement outside a module`, leaving a renderer whose `window.ipc` is `undefined`.
+
+- **Sandboxed preloads are CommonJS-only.** Electron sandboxes renderers by default since v20. A sandboxed preload runs in a restricted loader with no module resolution: it must be a **single self-contained CommonJS file**. Emitting ESM — which is what `tsc` produces in a `"type": "module"` package — does not work, and neither does splitting the bridge into a separate file the preload imports at runtime. Bundle the preload.
+- **`electron` stays external.** The sandbox shim provides `electron` (plus `events`, `timers`, and `url`). Mark it external in your bundler rather than trying to inline it. The generated bridge imports nothing else at runtime — its `Serializable` import is type-only and erased at build time — so no other module needs resolving.
+- **ESM preloads require opting out of the sandbox.** Electron supports an ESM preload only with `sandbox: false` and an `.mjs` extension. That trades a real security boundary for a build convenience — prefer bundling to CommonJS.
+- **`contextIsolation: true` and `nodeIntegration: false`** are assumed by the generated bridge and are the defaults. The runtime does not verify them; see [security model](#security-model).
+
+[`example/`](./example) builds its preload exactly this way — `tsc` for compilation, then a small [Rollup config](./example/rollup.config.js) to bundle — and runs under `sandbox: true`.
 
 ## Example
 
@@ -130,13 +184,17 @@ pnpm start
 
 ### Runtime (`electron-ipc-module`)
 
-| Export                                         | Description                                 |
-| ---------------------------------------------- | ------------------------------------------- |
-| `defineIpcModule(prefix, channels, options?)`  | Register a group of IPC channels            |
-| `createIpcHelpers<TEmit>()`                    | Create typed `handle` / `listen` helpers    |
-| `defineIpcEvents<TEvents>()`                   | Declare an emitted-event map for the bridge |
-| `handle`, `handleOnce`, `listen`, `listenOnce` | Default untyped helpers                     |
-| `createIpcContainer()`                         | Load, unload, and observe IPC modules       |
+| Export                                         | Description                                     |
+| ---------------------------------------------- | ----------------------------------------------- |
+| `defineIpcModule(prefix, channels, options?)`  | Register a group of IPC channels                |
+| `createIpcHelpers<TEmit>()`                    | Create typed `handle` / `listen` helpers        |
+| `defineIpcEvents<TEvents>()`                   | Declare an emitted-event map for the bridge     |
+| `defineChannel(type, fn)`                      | Low-level channel definition behind the helpers |
+| `handle`, `handleOnce`, `listen`, `listenOnce` | Default untyped helpers                         |
+| `createIpcContainer()`                         | Load, unload, and observe IPC modules           |
+| `IpcAuthorizationError`                        | Thrown when `authorize` returns `false`         |
+| `IpcChannelCollisionError`                     | Thrown on a duplicate physical channel name     |
+| `IpcContainerDisposedError`                    | Thrown by lifecycle calls after `dispose()`     |
 
 **Typed events.** Pass an event map to `createIpcHelpers<TEmit>()` to type `event.reply`, `event.sender.send`, and `event.senderFrame?.send`. Emitted events are **not** prefixed by `defineIpcModule`.
 
@@ -166,7 +224,9 @@ defineIpcModule("profile", channels, {
 defineIpcModule("profile", channels, {
   authorize: (event) => event.senderFrame?.url.startsWith("app://") === true,
   validate: {
-    save: (args) => profileInputSchema.parse(args[0]),
+    save: (args) => {
+      profileInputSchema.parse(args[0]);
+    },
   },
   // listen/listenOnce failures are not returned to the renderer — hook or log them
   onListenerError: (error, context) => {
@@ -174,6 +234,8 @@ defineIpcModule("profile", channels, {
   },
 });
 ```
+
+Validators **inspect, they do not transform**. The channel callback receives the original arguments, so a validator's return value is discarded — parsing with a schema that coerces or strips fields does not change what the handler sees. Do that work inside the handler.
 
 For `handle` channels, rejected promises propagate back through `ipcRenderer.invoke`. For fire-and-forget `listen` channels, failures are caught and passed to `onListenerError` (or logged) so they never become unhandled rejections.
 
@@ -199,7 +261,9 @@ await ipc.unload("profile");
 await ipc.unloadAll();
 ```
 
-All lifecycle mutations (`load`, `loadAll`, `unload`, `unloadAll`, and `dispose`) are asynchronous and run through one FIFO queue in invocation order. Reads such as `has`, `names`, and `getChannels` report only committed state and do not wait for that queue.
+Reads: `has(name)`, `getChannels(name)`, and the `names`, `allChannels`, and `size` getters.
+
+All lifecycle mutations (`load`, `loadAll`, `unload`, `unloadAll`, and `dispose`) are asynchronous and run through one FIFO queue in invocation order. Reads report only committed state and do not wait for that queue.
 
 - `load(name, register)` unloads a committed module with the same name before it starts the replacement registration. If replacement fails, the old module stays unloaded.
 - `loadAll(entries)` is insert-only and transactional. It rejects before registration if any supplied name is loaded, then registers entries in object iteration order. Its result is `Record<string, string[]>`, preserving each module name. A failure rolls back every earlier entry from that batch.
@@ -210,9 +274,56 @@ All lifecycle mutations (`load`, `loadAll`, `unload`, `unloadAll`, and `dispose`
 
 Because the queue is global, overlap has no special race behavior: `load(); unload()` loads and then unloads, two loads replace in call order, and no operation can interleave with a `loadAll` batch or `dispose`.
 
+### Boundaries and caveats
+
+Three things that are Electron's behavior rather than this package's, and are worth knowing before you design around them.
+
+#### What survives the boundary
+
+Electron serializes IPC payloads with the structured clone algorithm, which does not carry JavaScript semantics across intact. The generated bridge wraps every parameter and return type in `Serializable<T>` so the renderer's types describe what it actually receives, not what the main process returned:
+
+| In the main process                                                  | In the renderer                                       |
+| -------------------------------------------------------------------- | ----------------------------------------------------- |
+| Class instance                                                       | Plain object with its own properties; methods `never` |
+| Method or function-valued property                                   | `never` — structured clone throws `DataCloneError`    |
+| `Date`, `RegExp`, `Map`, `Set`, `Error`, `ArrayBuffer`, typed arrays | Preserved, prototype included                         |
+| Getter                                                               | Flattened to the value it evaluated to at send time   |
+
+So a handler returning a `User` class instance gives the renderer `{ id: string; greet: never }`, and `user.greet()` is a compile error at the call site instead of `undefined is not a function` at runtime. Return plain data, or map to a DTO inside the handler.
+
+`Serializable<T>` is exported from the root if you want it in your own wrappers.
+
+#### `handleOnce` and `listenOnce` are process-scoped
+
+`ipcMain` is global, so the first call from _any_ window consumes the channel: later `invoke`s reject with "No handler registered", and later sends are dropped silently. In a multi-window app use `handle`/`listen` and track one-shot state yourself.
+
+#### No cancellation or progress API, by design
+
+There is no `AbortSignal` on the handler context and no streaming channel kind. Doing it properly means per-call correlation IDs, per-call state in the container, and teardown when a window closes — a subsystem, for a problem two IPC channels already solve:
+
+```ts
+// main
+const cancelled = new Set<string>();
+
+defineIpcModule("export", {
+  start: handle(async (event, jobId: string) => {
+    for (const chunk of chunks) {
+      if (cancelled.has(jobId)) return { cancelled: true };
+      event.sender.send("export-progress", jobId, chunk.index / chunks.length);
+    }
+    return { cancelled: false };
+  }),
+  cancel: listen((_event, jobId: string) => {
+    cancelled.add(jobId);
+  }),
+});
+```
+
+Open an issue if you have a case this pattern genuinely cannot cover.
+
 ### Error contract
 
-| Failure                | 0.1 behavior                                                                                                                                                                                                                                                                                                                                                                                                       |
+| Failure                | Behavior                                                                                                                                                                                                                                                                                                                                                                                                           |
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Authorization          | `authorize` returning `false` creates `IpcAuthorizationError`. A thrown/rejected authorization error is preserved. Handlers reject; listeners use listener-failure behavior below.                                                                                                                                                                                                                                 |
 | Validation             | The validator's thrown/rejected value is preserved. The channel callback is not called. Handlers reject; listeners use listener-failure behavior below.                                                                                                                                                                                                                                                            |
@@ -226,7 +337,7 @@ Because the queue is global, overlap has no special race behavior: `load(); unlo
 
 ### Intentional public exports
 
-The root export contains the runtime values shown above, `IpcAuthorizationError`, `IpcChannelCollisionError`, and `IpcContainerDisposedError`. Its exported types are the callback/event types (`IpcHandler`, `IpcListener`, typed Electron event/sender types), module/container registration types, option/context types, channel definition types, generator analysis/option types, and the general `MaybePromise`, `MethodsOnly`, and `LoggerLike` helpers. These lower-level types are public so wrappers and tooling can describe compatible registrations without importing internal files.
+The root export contains the runtime values shown above, `IpcAuthorizationError`, `IpcChannelCollisionError`, and `IpcContainerDisposedError`. Its exported types are the callback/event types (`IpcHandler`, `IpcListener`, typed Electron event/sender types), module/container registration types, option/context types, channel definition types, generator analysis/option types, and the general `MaybePromise`, `MethodsOnly`, `Serializable`, and `LoggerLike` helpers. These lower-level types are public so wrappers and tooling can describe compatible registrations without importing internal files.
 
 The Rollup and Vite paths export the plugin default plus `IpcBridgeOptions`. The generator path exports `resolveIpcBridgeOptions`, `getIpcBridgeWatchTargets`, `isIpcBridgeRelevantFile`, `runIpcBridgeGeneration`, and `IpcBridgeOptions`. Compile-time API tests import all of these through the built package export map; no public-contract test imports `src`.
 
@@ -273,11 +384,22 @@ npx electron-ipc-module check
 
 `check` does not write files and exits non-zero when the generated bridge is stale. The programmatic generator is exported from `electron-ipc-module/generator`.
 
+**Commit the generated bridge.** It is the renderer's entire API surface, so keeping it in version control makes every change to it show up in review — a new channel reaching the renderer is exactly the diff a reviewer should see, and it is invisible if the file is produced during the build. It also means a fresh clone type-checks before anyone runs the generator.
+
+Then run `check` in CI to guarantee the committed file still matches the `*.ipc.ts` sources:
+
+```yaml
+- run: npx electron-ipc-module check
+```
+
+[`example/generated/ipc-bridge.ts`](./example/generated/ipc-bridge.ts) follows exactly that convention.
+
 ## Security model
 
-- **Context isolation required.** The generated bridge is meant to be exposed via `contextBridge.exposeInMainWorld` in a preload script (see step 4 above); it assumes `contextIsolation: true` and `nodeIntegration: false` on the `BrowserWindow`. The runtime does not check these settings itself.
-- **No arbitrary channel exposure.** The bridge is generated statically at build time from the `*.ipc.ts` files found in `ipcDir` — the renderer only ever gets `invoke`/`send` wrappers for channels you explicitly declared with `defineIpcModule`. There is no generic `ipcRenderer.invoke`/`.send`/`.on` passthrough, so the renderer can't reach an arbitrary or future main-process channel.
-- **Main process still validates input.** Channel prefixing and typed bridges prevent _name_ collisions and typos, not payload attacks. Use the `authorize` and `validate` hooks (or equivalent checks inside handlers) before touching the filesystem, network, or other privileged APIs.
+- **Context isolation required.** The generated bridge is meant to be exposed via `contextBridge.exposeInMainWorld` in a preload script (see [step 4](#4-expose-the-bridge-in-preload)); it assumes `contextIsolation: true` and `nodeIntegration: false` on the `BrowserWindow`. The runtime does not check these settings itself.
+- **Keep the sandbox on.** `sandbox: true` is the default and the [preload constraints](#preload-constraints) are written around keeping it that way. Disabling it to avoid bundling your preload trades a process-level security boundary for a build shortcut.
+- **No arbitrary channel exposure.** The bridge is generated statically at build time from the `*.ipc.ts` files found in `ipcDir` — the renderer only ever gets `invoke`/`send` wrappers for channels you explicitly declared with `defineIpcModule`. There is no generic `ipcRenderer.invoke`/`.send`/`.on` passthrough, so the renderer cannot reach an arbitrary or future main-process channel.
+- **Main process still validates input.** Channel prefixing and typed bridges prevent _name_ collisions and typos, not payload attacks. Types are erased at runtime and a compromised renderer can send anything to a declared channel. Use the `authorize` and `validate` hooks (or equivalent checks inside handlers) before touching the filesystem, network, or other privileged APIs.
 
 ## Recommended layout
 
@@ -287,8 +409,11 @@ main/
     profile.ipc.ts
     settings.ipc.ts
   generated/
-    ipc-bridge.ts
-  preload.ts
+    ipc-bridge.ts     # generated, committed, verified by `check` in CI
+  main.ts
+  preload.ts          # bundled to a single CommonJS file — see preload constraints
+renderer/
+  ipc.d.ts            # declares window.ipc from `typeof bridge`
 ```
 
 ## License

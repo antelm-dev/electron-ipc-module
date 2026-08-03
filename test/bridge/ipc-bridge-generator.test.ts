@@ -38,7 +38,9 @@ describe("generateBridge", () => {
 
     expect(code).toContain("import { ipcRenderer } from 'electron';");
     expect(code).not.toContain("IpcRendererEvent");
-    expect(code).toContain('ping: (): Promise<string> => ipcRenderer.invoke("app:ping")');
+    expect(code).toContain(
+      'ping: (): Promise<Serializable<string>> => ipcRenderer.invoke("app:ping")',
+    );
     expect(code).toContain('notify: (): void => ipcRenderer.send("app:notify")');
   });
 
@@ -59,7 +61,7 @@ describe("generateBridge", () => {
     ]);
 
     expect(code).toContain(
-      'add: (...args: [a: number, b: number]): Promise<number> => ipcRenderer.invoke("math:add", ...args)',
+      'add: (...args: Serializable<[a: number, b: number]>): Promise<Serializable<number>> => ipcRenderer.invoke("math:add", ...args)',
     );
   });
 
@@ -77,10 +79,10 @@ describe("generateBridge", () => {
     expect(code).toContain("function createOnHelper");
     expect(code).toContain("function createOnceHelper");
     expect(code).toContain(
-      'onProfileUpdated: (listener: (...args: [id: string, name: string]) => void): Unsubscribe => createOnHelper<[id: string, name: string]>("profile-updated", listener)',
+      'onProfileUpdated: (listener: (...args: Serializable<[id: string, name: string]>) => void): Unsubscribe => createOnHelper<Serializable<[id: string, name: string]>>("profile-updated", listener)',
     );
     expect(code).toContain(
-      'onceProfileUpdated: (listener: (...args: [id: string, name: string]) => void): Unsubscribe => createOnceHelper<[id: string, name: string]>("profile-updated", listener)',
+      'onceProfileUpdated: (listener: (...args: Serializable<[id: string, name: string]>) => void): Unsubscribe => createOnceHelper<Serializable<[id: string, name: string]>>("profile-updated", listener)',
     );
   });
 

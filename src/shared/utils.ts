@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 
-export type { MethodsOnly, MaybePromise, LoggerLike } from "./types/runtime.js";
+export type { MethodsOnly, MaybePromise, LoggerLike, Serializable } from "./types/runtime.js";
 
 /** Default directory scanned for `*.ipc.ts` module files. */
 export const DEFAULT_IPC_DIR = "./src/ipc";

@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "generate": "electron-ipc-module generate --ipc-dir ./ipc --out-file ./generated/ipc-bridge.ts --tsconfig ./tsconfig.ipc.json",
-    "build": "pnpm run generate && tsc -p tsconfig.json",
+    "build": "pnpm run generate && tsc -p tsconfig.json && rollup -c",
     "start": "pnpm run build && electron ./dist/main.js"
   },
   "dependencies": {
@@ -12,6 +12,7 @@
   },
   "devDependencies": {
     "electron": "^43.2.0",
+    "rollup": "^4.17.2",
     "typescript": "^5.8.3"
   }
 }

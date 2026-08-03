@@ -32,6 +32,7 @@ import {
   type MaybePromise,
   type MethodsOnly,
   type ResolvedIpcBridgeOptions,
+  type Serializable,
   type TypedIpcMainEvent,
   type TypedIpcMainInvokeEvent,
   type TypedWebContents,
@@ -115,6 +116,7 @@ type PublicTypes = [
   LoggerLike,
   MaybePromise<string>,
   MethodsOnly<{ method(): void; value: string }>,
+  Serializable<string>,
   ResolvedIpcBridgeOptions,
   TypedIpcMainEvent,
   TypedIpcMainInvokeEvent,
@@ -122,7 +124,49 @@ type PublicTypes = [
   TypedWebFrameMain,
 ];
 
+// `Serializable` models the structured clone boundary. These assertions are
+// compile errors if it stops matching what Electron actually delivers.
+type Equal<X, Y> =
+  (<T>() => T extends X ? 1 : 2) extends <T>() => T extends Y ? 1 : 2 ? true : false;
+type Expect<T extends true> = T;
+
+declare class User {
+  id: string;
+  createdAt: Date;
+  greet(): string;
+}
+
+type SerializableAssertions = [
+  // Class instances arrive as plain data: the prototype is gone, so methods
+  // become `never` while own properties survive.
+  Expect<Equal<Serializable<User>, { id: string; createdAt: Date; greet: never }>>,
+  // Structured clone throws on functions rather than dropping them silently.
+  Expect<Equal<Serializable<() => void>, never>>,
+  Expect<Equal<Serializable<{ run: () => void }>, { run: never }>>,
+  // Built-ins the algorithm reproduces with their prototypes intact.
+  Expect<Equal<Serializable<Date>, Date>>,
+  Expect<Equal<Serializable<Map<string, Date>>, Map<string, Date>>>,
+  Expect<Equal<Serializable<Set<number>>, Set<number>>>,
+  Expect<Equal<Serializable<Uint8Array>, Uint8Array>>,
+  // Tuples keep their labels and arity; optional and readonly modifiers survive.
+  Expect<Equal<Serializable<[id: string, run: () => void]>, [id: string, run: never]>>,
+  Expect<Equal<Serializable<{ a?: string }>, { a?: string }>>,
+  Expect<Equal<Serializable<{ readonly a: string }>, { readonly a: string }>>,
+  // Recurses through arrays and nested objects.
+  Expect<
+    Equal<
+      Serializable<{ users: User[] }>,
+      { users: { id: string; createdAt: Date; greet: never }[] }
+    >
+  >,
+  // Unions distribute; primitives and `any` pass through untouched.
+  Expect<Equal<Serializable<string | (() => void)>, string | never>>,
+  Expect<Equal<Serializable<any>, any>>,
+  Expect<Equal<Serializable<string | undefined>, string | undefined>>,
+];
+
 declare const ipcMain: IpcMain;
 registration(ipcMain);
+void (null as unknown as SerializableAssertions);
 void [loadResult, loadAllResult, unloadResult, unloadAllResult, disposeResult];
 void (null as unknown as PublicTypes);

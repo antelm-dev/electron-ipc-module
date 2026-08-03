@@ -14,6 +14,65 @@ export type MethodsOnly<T> = {
 /** A value that may be provided synchronously or as a promise. */
 export type MaybePromise<T> = T | Promise<T>;
 
+/** True only for `any`, which would otherwise match every conditional branch. */
+type IsAny<T> = 0 extends 1 & T ? true : false;
+
+/** Values the structured clone algorithm reproduces verbatim, prototype included. */
+type StructuredCloneNative =
+  | ArrayBuffer
+  | ArrayBufferView
+  | Date
+  | Error
+  | RegExp
+  | bigint
+  | boolean
+  | null
+  | number
+  | string
+  | undefined;
+
+/**
+ * Model what survives the IPC boundary.
+ *
+ * Electron serializes IPC payloads with the structured clone algorithm, which
+ * does not carry JavaScript semantics across intact. Declared types describe
+ * the value the main process returned; this type describes the value the
+ * renderer actually receives:
+ *
+ * - **Methods and function-valued properties become `never`.** Structured clone
+ *   throws `DataCloneError` on a function, so a payload containing one fails at
+ *   runtime rather than arriving incomplete.
+ * - **Class instances lose their prototype.** They arrive as plain objects
+ *   carrying their own enumerable properties, so `instanceof` is false and
+ *   every method is gone. The mapped type reproduces this by dropping the
+ *   nominal class identity and mapping methods to `never`.
+ * - **`Date`, `RegExp`, `Map`, `Set`, `Error`, `ArrayBuffer`, and typed arrays
+ *   survive** and keep their prototypes.
+ * - **Getters are flattened** to the value they evaluated to at send time.
+ *
+ * Applied automatically to the generated bridge's parameters and return types,
+ * so a payload that cannot cross the boundary is a compile error at the call
+ * site instead of `undefined is not a function` in the renderer.
+ */
+export type Serializable<T> =
+  IsAny<T> extends true
+    ? T
+    : T extends StructuredCloneNative
+      ? T
+      : T extends (...args: any[]) => any
+        ? never
+        : T extends symbol
+          ? never
+          : T extends Map<infer TKey, infer TValue>
+            ? Map<Serializable<TKey>, Serializable<TValue>>
+            : T extends Set<infer TItem>
+              ? Set<Serializable<TItem>>
+              : // Homomorphic, so arrays and tuples keep their shape, labels, and
+                // `readonly`/optional modifiers instead of collapsing to objects.
+                T extends object
+                ? { [K in keyof T]: Serializable<T[K]> }
+                : T;
+
 /** Minimal console-like logging surface. */
 export type LoggerLike = Pick<Console, "debug" | "info" | "warn" | "error" | "log">;
 
