@@ -334,7 +334,15 @@ export function createIpcHelpers<TEmit extends IpcEventMap>() {
       return defineChannel("handle", fn);
     },
 
-    /** Register a one-shot request/response channel via `ipcMain.handleOnce`. */
+    /**
+     * Register a one-shot request/response channel via `ipcMain.handleOnce`.
+     *
+     * Scoped to the **process**, not a window: `ipcMain` is global, so the
+     * first caller from any window consumes the handler and every later
+     * `invoke` — including from other windows — rejects with "No handler
+     * registered". Use `handle` for anything a multi-window app can call more
+     * than once.
+     */
     handleOnce<TArgs extends any[] = any[], TResult = any>(fn: IpcHandler<TArgs, TResult, TEmit>) {
       return defineChannel("handleOnce", fn);
     },
@@ -344,7 +352,13 @@ export function createIpcHelpers<TEmit extends IpcEventMap>() {
       return defineChannel("listen", fn);
     },
 
-    /** Register a one-shot fire-and-forget channel via `ipcMain.once`. */
+    /**
+     * Register a one-shot fire-and-forget channel via `ipcMain.once`.
+     *
+     * Process-scoped like {@link createIpcHelpers.handleOnce}: the first
+     * message from any window consumes the listener, and later sends are
+     * silently ignored.
+     */
     listenOnce<TArgs extends any[] = any[], TResult = any>(fn: IpcListener<TArgs, TResult, TEmit>) {
       return defineChannel("listenOnce", fn);
     },

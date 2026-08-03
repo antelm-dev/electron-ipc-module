@@ -22,13 +22,13 @@ Modular, type-safe IPC for Electron. Declare handlers in the main process, load 
 npm install electron-ipc-module
 ```
 
-**Peer dependency:** `electron >= 12`
+**Peer dependency:** `electron >= 41` (see the compatibility contract below)
 
 ## 0.1 compatibility contract
 
 - **Modules:** ESM only. Use `import`; CommonJS `require()` is not a supported entry point.
 - **Node.js:** Node 20 and every even/odd release from Node 22 onward (`20 || >=22`). CI covers Node 20 and 22.
-- **Electron:** `electron >=12` is an API-compatibility claim, not a promise that every old Electron release is continuously tested or supported upstream. CI covers the latest patch of Electron's three currently supported stable majors (41, 42, and 43 when this contract was frozen). The matrix advances with [Electron's latest-three-stable support policy](https://www.electronjs.org/docs/latest/tutorial/electron-timelines).
+- **Electron:** the peer range is `>=41` — what CI actually tests, which is the latest patch of Electron's three currently supported stable majors (41, 42, and 43 when this contract was frozen). The matrix advances with [Electron's latest-three-stable support policy](https://www.electronjs.org/docs/latest/tutorial/electron-timelines). Nothing here uses an API newer than Electron 12, so overriding the peer range to run against an older major will very likely work — it is simply untested, and a claim that broad was more misleading than useful.
 - **Package paths:** only `.`, `./rollup-plugin`, and `./generator` are public. Files under `dist/` are implementation details.
 
 ## Quick start
@@ -149,14 +149,35 @@ pnpm start
 | `handle`, `handleOnce`, `listen`, `listenOnce` | Default untyped helpers                     |
 | `createIpcContainer()`                         | Load, unload, and observe IPC modules       |
 
+**`handleOnce` and `listenOnce` are process-scoped, not window-scoped.** `ipcMain` is global, so the first call from _any_ window consumes the channel: later `invoke`s reject with "No handler registered", and later sends are dropped. That is Electron's behavior, not something this package narrows. In a multi-window app use `handle`/`listen` and track one-shot state yourself.
+
+**No cancellation or progress API, by design.** There is no `AbortSignal` on the handler context and no streaming channel kind. Doing it properly means per-call correlation IDs, per-call state in the container, and teardown when a window closes — a subsystem, for a problem two IPC channels already solve:
+
+```ts
+// main
+const cancelled = new Set<string>();
+defineIpcModule("export", {
+  start: handle(async (event, jobId: string) => {
+    for (const chunk of chunks) {
+      if (cancelled.has(jobId)) return { cancelled: true };
+      event.sender.send("export-progress", jobId, chunk.index / chunks.length);
+    }
+    return { cancelled: false };
+  }),
+  cancel: listen((_event, jobId: string) => cancelled.add(jobId)),
+});
+```
+
+Open an issue if you have a case this pattern genuinely cannot cover.
+
 **What survives the boundary.** Electron serializes IPC payloads with the structured clone algorithm, which does not carry JavaScript semantics across intact. The generated bridge wraps every parameter and return type in `Serializable<T>` so the renderer's types describe what it actually receives, not what the main process returned:
 
-| In the main process       | In the renderer                                        |
-| ------------------------- | ------------------------------------------------------ |
-| Class instance            | Plain object with the own properties; methods `never`   |
-| Method or function-valued property | `never` — structured clone throws `DataCloneError` |
-| `Date`, `RegExp`, `Map`, `Set`, `Error`, `ArrayBuffer`, typed arrays | Preserved, prototype included |
-| Getter                    | Flattened to the value it evaluated to at send time     |
+| In the main process                                                  | In the renderer                                       |
+| -------------------------------------------------------------------- | ----------------------------------------------------- |
+| Class instance                                                       | Plain object with the own properties; methods `never` |
+| Method or function-valued property                                   | `never` — structured clone throws `DataCloneError`    |
+| `Date`, `RegExp`, `Map`, `Set`, `Error`, `ArrayBuffer`, typed arrays | Preserved, prototype included                         |
+| Getter                                                               | Flattened to the value it evaluated to at send time   |
 
 So a handler returning a `User` class instance gives the renderer `{ id: string; greet: never }` — calling `user.greet()` is a compile error at the call site instead of `undefined is not a function` at runtime. Return plain data, or map to a DTO inside the handler.
 
@@ -296,6 +317,16 @@ npx electron-ipc-module check
 ```
 
 `check` does not write files and exits non-zero when the generated bridge is stale. The programmatic generator is exported from `electron-ipc-module/generator`.
+
+**Commit the generated bridge.** It is the renderer's entire API surface, so keeping it in version control makes every change to it show up in review — a new channel reaching the renderer is exactly the diff a reviewer should see, and it is invisible if the file is generated during the build. It also means a fresh clone type-checks before anyone runs the generator.
+
+Then run `check` in CI to guarantee the committed file matches the `*.ipc.ts` sources:
+
+```yaml
+- run: npx electron-ipc-module check
+```
+
+`example/generated/ipc-bridge.ts` in this repository follows exactly that convention.
 
 ## Security model
 
