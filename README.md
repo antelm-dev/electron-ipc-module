@@ -41,13 +41,15 @@ Modular, type-safe IPC for Electron. Declare handlers in the main process, load 
 npm install electron-ipc-module
 ```
 
-**Peer dependency:** `electron >= 41` (see the [compatibility contract](#compatibility-contract))
+**Peer dependency:** `electron >= 12` — the real API floor. CI tests 41–43; see the [compatibility contract](#compatibility-contract).
 
 ## Compatibility contract
 
 - **Modules:** ESM only. Use `import`; CommonJS `require()` is not a supported entry point. This applies to the package itself — your preload output is a separate question, covered in [preload constraints](#preload-constraints).
 - **Node.js:** Node 20 and every even/odd release from Node 22 onward (`20 || >=22`). CI covers Node 20 and 22.
-- **Electron:** the peer range is `>=41`, which is exactly what CI tests: the latest patch of Electron's three currently supported stable majors (41, 42, and 43 when this contract was frozen). The matrix advances with [Electron's latest-three-stable support policy](https://www.electronjs.org/docs/latest/tutorial/electron-timelines). Nothing here uses an API newer than Electron 12, so overriding the peer range to run against an older major will very likely work — it is simply untested.
+- **Electron:** two different claims, deliberately kept apart.
+  - The peer range is `>=12`, an **API-compatibility** claim: nothing here uses an Electron API newer than 12. It is a permissive install-time constraint because npm enforces it, and refusing to install on a version that works helps nobody.
+  - **Verified** support is narrower. CI tests the latest patch of Electron's three currently supported stable majors — 41, 42, and 43 when this contract was frozen — and advances with [Electron's latest-three-stable support policy](https://www.electronjs.org/docs/latest/tutorial/electron-timelines). Between 12 and 41 the package should work and is not tested; bug reports from that range are welcome and will be treated as real.
 - **Package paths:** only `.`, `./rollup-plugin`, and `./generator` are public. Files under `dist/` are implementation details.
 
 ## Quick start
