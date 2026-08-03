@@ -1,4 +1,5 @@
 import { ipcRenderer, type IpcRendererEvent } from 'electron';
+import type { Serializable } from 'electron-ipc-module';
 
 type Unsubscribe = () => void;
 
@@ -28,12 +29,12 @@ function createOnceHelper<TArgs extends any[]>(
 
 export const bridge = {
   greeting: {
-    get: (): Promise<string> => ipcRenderer.invoke("greeting:get"),
-    set: (...args: [name: string]): void => ipcRenderer.send("greeting:set", ...args),
-    notify: (...args: [message: string]): void => ipcRenderer.send("greeting:notify", ...args),
-    onGreetingChanged: (listener: (...args: [greeting: string]) => void): Unsubscribe => createOnHelper<[greeting: string]>("greeting:greeting-changed", listener),
-    onceGreetingChanged: (listener: (...args: [greeting: string]) => void): Unsubscribe => createOnceHelper<[greeting: string]>("greeting:greeting-changed", listener),
-    onNoticeReceived: (listener: (...args: [message: string]) => void): Unsubscribe => createOnHelper<[message: string]>("greeting:notice-received", listener),
-    onceNoticeReceived: (listener: (...args: [message: string]) => void): Unsubscribe => createOnceHelper<[message: string]>("greeting:notice-received", listener),
+    get: (): Promise<Serializable<string>> => ipcRenderer.invoke("greeting:get"),
+    set: (...args: Serializable<[name: string]>): void => ipcRenderer.send("greeting:set", ...args),
+    notify: (...args: Serializable<[message: string]>): void => ipcRenderer.send("greeting:notify", ...args),
+    onGreetingChanged: (listener: (...args: Serializable<[greeting: string]>) => void): Unsubscribe => createOnHelper<Serializable<[greeting: string]>>("greeting:greeting-changed", listener),
+    onceGreetingChanged: (listener: (...args: Serializable<[greeting: string]>) => void): Unsubscribe => createOnceHelper<Serializable<[greeting: string]>>("greeting:greeting-changed", listener),
+    onNoticeReceived: (listener: (...args: Serializable<[message: string]>) => void): Unsubscribe => createOnHelper<Serializable<[message: string]>>("greeting:notice-received", listener),
+    onceNoticeReceived: (listener: (...args: Serializable<[message: string]>) => void): Unsubscribe => createOnceHelper<Serializable<[message: string]>>("greeting:notice-received", listener),
   },
 } as const;

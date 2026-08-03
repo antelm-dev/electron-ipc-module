@@ -28,11 +28,24 @@ function assertUniqueIdentifiers(
   }
 }
 
+/**
+ * Wrap a serialized type so the bridge describes what the renderer receives
+ * rather than what the main process returned. See `Serializable`.
+ */
+function serializable(typeStr: string) {
+  return `Serializable<${typeStr}>`;
+}
+
 /** The `electron` import line, including `IpcRendererEvent` when events exist. */
 function generateImportLine(hasEmittedEvents: boolean) {
   return hasEmittedEvents
     ? `import { ipcRenderer, type IpcRendererEvent } from 'electron';`
     : `import { ipcRenderer } from 'electron';`;
+}
+
+/** Type-only import of `Serializable`, erased at build time. */
+function generateSerializableImportLine() {
+  return `import type { Serializable } from 'electron-ipc-module';`;
 }
 
 /** The shared `createOnHelper`/`createOnceHelper` source emitted once per bridge. */
@@ -72,17 +85,19 @@ function generateChannelEntry(channel: ChannelInfo, prefix: string) {
   const channelName = prefix ? `${prefix}:${channel.key}` : channel.key;
   const camelKey = toCamelCase(channel.key);
   const method = channel.isHandler ? "invoke" : "send";
-  const paramDecl = channel.argsType ? `...args: ${channel.argsType}` : "";
+  const paramDecl = channel.argsType ? `...args: ${serializable(channel.argsType)}` : "";
   const forward = channel.argsType ? ", ...args" : "";
-  const returnAnnotation = channel.isHandler ? `Promise<${channel.returnType}>` : "void";
+  const returnAnnotation = channel.isHandler
+    ? `Promise<${serializable(channel.returnType)}>`
+    : "void";
 
   return `    ${camelKey}: (${paramDecl}): ${returnAnnotation} => ipcRenderer.${method}(${JSON.stringify(channelName)}${forward})`;
 }
 
 /** The `on<Event>` / `once<Event>` subscription methods for one emitted event. */
 function generateEventEntries(event: EmittedEventInfo, eventPrefix?: string) {
-  const argsType = event.argsType ?? "[]";
-  const listenerType = event.argsType ? `(...args: ${event.argsType}) => void` : "() => void";
+  const argsType = event.argsType ? serializable(event.argsType) : "[]";
+  const listenerType = event.argsType ? `(...args: ${argsType}) => void` : "() => void";
   const pascalKey = toPascalCase(event.key);
   const channel = JSON.stringify(eventPrefix ? `${eventPrefix}:${event.key}` : event.key);
 
@@ -136,7 +151,7 @@ export function generateBridge(modules: AnalyzedIpcModule[]) {
     "IPC bridge",
   );
   const hasEmittedEvents = modules.some((ipcModule) => ipcModule.emittedEvents.length > 0);
-  const lines = [generateImportLine(hasEmittedEvents), ""];
+  const lines = [generateImportLine(hasEmittedEvents), generateSerializableImportLine(), ""];
 
   if (hasEmittedEvents) {
     lines.push(...generateEventHelpers());

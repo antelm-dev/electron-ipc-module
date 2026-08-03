@@ -149,6 +149,19 @@ pnpm start
 | `handle`, `handleOnce`, `listen`, `listenOnce` | Default untyped helpers                     |
 | `createIpcContainer()`                         | Load, unload, and observe IPC modules       |
 
+**What survives the boundary.** Electron serializes IPC payloads with the structured clone algorithm, which does not carry JavaScript semantics across intact. The generated bridge wraps every parameter and return type in `Serializable<T>` so the renderer's types describe what it actually receives, not what the main process returned:
+
+| In the main process       | In the renderer                                        |
+| ------------------------- | ------------------------------------------------------ |
+| Class instance            | Plain object with the own properties; methods `never`   |
+| Method or function-valued property | `never` — structured clone throws `DataCloneError` |
+| `Date`, `RegExp`, `Map`, `Set`, `Error`, `ArrayBuffer`, typed arrays | Preserved, prototype included |
+| Getter                    | Flattened to the value it evaluated to at send time     |
+
+So a handler returning a `User` class instance gives the renderer `{ id: string; greet: never }` — calling `user.greet()` is a compile error at the call site instead of `undefined is not a function` at runtime. Return plain data, or map to a DTO inside the handler.
+
+`Serializable<T>` is exported from the root if you want it in your own wrappers.
+
 **Typed events.** Pass an event map to `createIpcHelpers<TEmit>()` to type `event.reply`, `event.sender.send`, and `event.senderFrame?.send`. Emitted events are **not** prefixed by `defineIpcModule`.
 
 Alternatively, declare an event map with `defineIpcEvents<TEvents>()` and export it from the `*.ipc.ts` file. The bridge plugin reads the type argument to generate typed `on<Event>` / `once<Event>` listeners in the renderer — useful when a module emits events without wiring them through `createIpcHelpers`:
@@ -237,7 +250,7 @@ Because the queue is global, overlap has no special race behavior: `load(); unlo
 
 ### Intentional public exports
 
-The root export contains the runtime values shown above, `IpcAuthorizationError`, `IpcChannelCollisionError`, and `IpcContainerDisposedError`. Its exported types are the callback/event types (`IpcHandler`, `IpcListener`, typed Electron event/sender types), module/container registration types, option/context types, channel definition types, generator analysis/option types, and the general `MaybePromise`, `MethodsOnly`, and `LoggerLike` helpers. These lower-level types are public so wrappers and tooling can describe compatible registrations without importing internal files.
+The root export contains the runtime values shown above, `IpcAuthorizationError`, `IpcChannelCollisionError`, and `IpcContainerDisposedError`. Its exported types are the callback/event types (`IpcHandler`, `IpcListener`, typed Electron event/sender types), module/container registration types, option/context types, channel definition types, generator analysis/option types, and the general `MaybePromise`, `MethodsOnly`, `Serializable`, and `LoggerLike` helpers. These lower-level types are public so wrappers and tooling can describe compatible registrations without importing internal files.
 
 The Rollup and Vite paths export the plugin default plus `IpcBridgeOptions`. The generator path exports `resolveIpcBridgeOptions`, `getIpcBridgeWatchTargets`, `isIpcBridgeRelevantFile`, `runIpcBridgeGeneration`, and `IpcBridgeOptions`. Compile-time API tests import all of these through the built package export map; no public-contract test imports `src`.
 
