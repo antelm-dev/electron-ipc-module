@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.3.0](https://github.com/antelm-dev/electron-ipc-module/compare/v0.2.1...v0.3.0) (2026-08-03)
+
+
+### ⚠ BREAKING CHANGES
+
+* **bridge:** regenerate the bridge after upgrading. Payloads that cannot survive structured clone now fail to compile; each one is a latent runtime bug the previous types concealed. Return plain data or map to a DTO inside the handler.
+
+### Features
+
+* **bridge:** type generated payloads through the structured clone boundary ([d446027](https://github.com/antelm-dev/electron-ipc-module/commit/d446027222250eb97b0487bb56e3b273f25a70af))
+
+
+### Bug Fixes
+
+* **example:** load the preload under Electron's default sandbox ([5ef9c3d](https://github.com/antelm-dev/electron-ipc-module/commit/5ef9c3d5ca9ae495baddef2d3b0c3fb8c51ff10c))
+* sandboxed preload, structured clone types, and the docs that hid both ([e266508](https://github.com/antelm-dev/electron-ipc-module/commit/e266508f589e10b44fd6e96679ca3d7e9a7be698))
+
 ## [0.2.1](https://github.com/antelm-dev/electron-ipc-module/compare/v0.2.0...v0.2.1) (2026-08-03)
 
 
