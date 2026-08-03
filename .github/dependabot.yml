@@ -8,6 +8,12 @@ updates:
     directory: /
     schedule:
       interval: monthly
+    commit-message:
+      # runtime deps ship in the published package.json, so a bump only reaches
+      # users once it is released; `chore` is not a releasable unit for
+      # release-please and would strand them on main indefinitely
+      prefix: fix
+      prefix-development: chore
     groups:
       dev-dependencies:
         dependency-type: development
