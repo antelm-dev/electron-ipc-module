@@ -26,7 +26,10 @@ jobs:
       - id: release
         uses: googleapis/release-please-action@v5
         with:
-          release-type: node
+          # Configured by release-please-config.json so bump-minor-pre-major
+          # applies; it is not available as an action input.
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
 
   publish:
     needs: release-please
