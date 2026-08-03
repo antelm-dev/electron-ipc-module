@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
-import { watch } from "node:fs";
+import { realpathSync, watch } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   isIpcBridgeRelevantFile,
@@ -92,4 +93,16 @@ export function runCli(args = process.argv.slice(2)) {
   if (parsed.watchMode) startWatch(parsed.options);
 }
 
-runCli();
+/** True only when this file is the process entry point, not an import. */
+function isDirectRun() {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  try {
+    // argv[1] is the `.bin` symlink; import.meta.url is already the realpath.
+    return realpathSync(entry) === fileURLToPath(import.meta.url);
+  } catch {
+    return false;
+  }
+}
+
+if (isDirectRun()) runCli();
