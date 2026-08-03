@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/antelm-dev/electron-ipc-module/compare/v0.2.0...v0.2.1) (2026-08-03)
+
+
+### Bug Fixes
+
+* **example:** use fileURLToPath for preload and loadFile paths in Electron example app ([d9bb4f2](https://github.com/antelm-dev/electron-ipc-module/commit/d9bb4f2491c8d4ac385f43a7a56da087493bbedc))
+
 ## [0.2.0](https://github.com/antelm-dev/electron-ipc-module/compare/v0.1.0...v0.2.0) (2026-07-30)
 
 
