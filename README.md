@@ -41,7 +41,7 @@ Modular, type-safe IPC for Electron. Declare handlers in the main process, load 
 npm install electron-ipc-module
 ```
 
-**Peer dependency:** `electron >= 12` — the real API floor. CI tests 41–43; see the [compatibility contract](#compatibility-contract).
+**Peer dependencies:** `electron >= 12` and `typescript >= 5 < 7`. The generator, the CLI, and the Rollup plugin load the TypeScript compiler at runtime to analyse your IPC modules, so it is a real requirement rather than a build-time convenience — bundlers that transpile TypeScript without installing the compiler, Vite among them, would otherwise fail at first run. See the [compatibility contract](#compatibility-contract).
 
 ## Compatibility contract
 
@@ -50,7 +50,8 @@ npm install electron-ipc-module
 - **Electron:** two different claims, deliberately kept apart.
   - The peer range is `>=12`, an **API-compatibility** claim: nothing here uses an Electron API newer than 12. It is a permissive install-time constraint because npm enforces it, and refusing to install on a version that works helps nobody.
   - **Verified** support is narrower. CI tests the latest patch of Electron's three currently supported stable majors — 41, 42, and 43 when this contract was frozen — and advances with [Electron's latest-three-stable support policy](https://www.electronjs.org/docs/latest/tutorial/electron-timelines). Between 12 and 41 the package should work and is not tested; bug reports from that range are welcome and will be treated as real.
-- **Package paths:** only `.`, `./rollup-plugin`, and `./generator` are public. Files under `dist/` are implementation details.
+- **TypeScript:** `>=5.0.0 <7`, an install-enforced peer dependency. The generator stack imports `typescript` at runtime for program and type-checker access. TypeScript 7 moved that API off the package's root entry point (`exports["."]` now resolves to `lib/version.cjs`) and behind `typescript/unstable/*`, so it is excluded until the replacement API loses its `unstable` prefix.
+- **Package paths:** only `.`, `./rollup-plugin`, and `./generator` are public. Files under `dist/` are implementation details. Only `./rollup-plugin`, `./generator`, and the CLI need `typescript`; the `.` runtime entry does not import it.
 
 ## Quick start
 
