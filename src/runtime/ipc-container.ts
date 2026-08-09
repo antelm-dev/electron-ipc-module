@@ -3,6 +3,7 @@ import { ipcMain } from "electron";
 
 import type {
   IpcContainerEmitter,
+  IpcContainerEvents,
   IpcModuleRegister,
   IpcModuleRegistration,
 } from "../shared/types/runtime.js";
@@ -16,6 +17,29 @@ export class IpcContainerDisposedError extends Error {
   constructor() {
     super("The IPC container has been disposed");
     this.name = "IpcContainerDisposedError";
+  }
+}
+
+/**
+ * Reported on `error` when an observer callback itself threw.
+ *
+ * Observer exceptions are isolated from lifecycle control flow, so they arrive
+ * wrapped rather than raw: this distinguishes "your listener is broken" from
+ * "the load failed", which are otherwise indistinguishable on the same event.
+ */
+export class IpcObserverError extends Error {
+  readonly code = "IPC_OBSERVER_ERROR";
+
+  constructor(
+    readonly event: keyof IpcContainerEvents,
+    readonly moduleName: string,
+    readonly reason: unknown,
+  ) {
+    super(
+      `An IPC container ${JSON.stringify(event)} observer threw for module ` +
+        `${JSON.stringify(moduleName)}`,
+    );
+    this.name = "IpcObserverError";
   }
 }
 
@@ -111,7 +135,7 @@ export function createIpcContainer() {
     }
 
     modules.delete(name);
-    emitter.emit("unloaded", name);
+    safeEmit("unloaded", name);
 
     if (errors.length > 0) {
       throw new AggregateError(
@@ -122,9 +146,43 @@ export function createIpcContainer() {
     return true;
   };
 
+  const reportObserverError = (event: keyof IpcContainerEvents, name: string, reason: unknown) => {
+    // An `error` observer that throws has nowhere left to report to: re-entering
+    // `error` would recurse. Same for an unobserved `error` event, which Node
+    // turns into a throw. Both are terminal and documented as such.
+    if (event === "error" || rawEmitter.listenerCount("error") === 0) return;
+    try {
+      emitter.emit("error", name, new IpcObserverError(event, name, reason));
+    } catch {
+      // The `error` observer threw while reporting another observer's failure.
+    }
+  };
+
+  /**
+   * Notify observers without letting their exceptions reach lifecycle control
+   * flow.
+   *
+   * Listener callbacks are user code running inside a critical section. If one
+   * throws, the lifecycle operation around it has already succeeded — the
+   * registration is stored, or the module is deleted — so propagating would
+   * reject a promise whose work is done and leave the result disagreeing with
+   * `has()`, `names`, and the registered channels. It would also replace any
+   * error already in flight. Isolate here and report on `error` instead.
+   */
+  const safeEmit = <K extends keyof IpcContainerEvents>(
+    event: K,
+    ...args: IpcContainerEvents[K]
+  ) => {
+    try {
+      emitter.emit(event, ...args);
+    } catch (listenerError) {
+      reportObserverError(event, args[0], listenerError);
+    }
+  };
+
   const emitLoadError = (name: string, error: unknown) => {
     // An unobserved Node `error` event throws and would mask the real failure.
-    if (rawEmitter.listenerCount("error") > 0) emitter.emit("error", name, error);
+    if (rawEmitter.listenerCount("error") > 0) safeEmit("error", name, error);
   };
 
   const commitLoad = async (
@@ -157,7 +215,7 @@ export function createIpcContainer() {
 
       modules.set(name, registration);
       const channelNames = registration.channels.map(([channel]) => channel);
-      emitter.emit("loaded", name, channelNames);
+      safeEmit("loaded", name, channelNames);
       return channelNames;
     } catch (error) {
       emitLoadError(name, error);

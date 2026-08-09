@@ -199,6 +199,7 @@ pnpm start
 | `IpcAuthorizationError`                        | Thrown when `authorize` returns `false`         |
 | `IpcChannelCollisionError`                     | Thrown on a duplicate physical channel name     |
 | `IpcContainerDisposedError`                    | Thrown by lifecycle calls after `dispose()`     |
+| `IpcObserverError`                             | Reported on `error` when an observer threw      |
 
 **Typed events.** Pass an event map to `createIpcHelpers<TEmit>()` to type `event.reply`, `event.sender.send`, and `event.senderFrame?.send`. Emitted events are **not** prefixed by `defineIpcModule`.
 
@@ -278,6 +279,16 @@ All lifecycle mutations (`load`, `loadAll`, `unload`, `unloadAll`, and `dispose`
 
 Because the queue is global, overlap has no special race behavior: `load(); unload()` loads and then unloads, two loads replace in call order, and no operation can interleave with a `loadAll` batch or `dispose`.
 
+#### Observer exceptions
+
+Observers are notifications, not participants. An exception thrown by a `loaded`, `unloaded`, or `error` listener never changes the outcome of the lifecycle operation that emitted it:
+
+- The operation still resolves or rejects on its own merits, so its result always agrees with `has()`, `names`, and the registered channels. A throwing `loaded` listener cannot leave a rejected `loadAll()` partially committed, and cannot un-commit a successful `load()`.
+- An error already in flight is never replaced. A throwing `error` listener cannot mask the registration or cleanup failure it was told about, and a throwing `unloaded` listener cannot swallow an `AggregateError` from a failed cleanup.
+- The exception itself is reported on `error`, wrapped in `IpcObserverError` so it is distinguishable from a lifecycle failure. It carries `event`, `moduleName`, and the original `reason`.
+
+One case is terminal and silent by design: an `error` listener that throws while being told about another observer's exception. Re-entering `error` would recurse and there is no other channel, so it is dropped. Keep `error` listeners defensive.
+
 ### Boundaries and caveats
 
 Three things that are Electron's behavior rather than this package's, and are worth knowing before you design around them.
@@ -337,11 +348,11 @@ Open an issue if you have a case this pattern genuinely cannot cover.
 | Registration collision | Electron registration errors are preserved and already-attached channels are rolled back. Container-detected duplicate physical channels reject with `IpcChannelCollisionError`; cleanup failure produces an `AggregateError` containing both errors.                                                                                                                                                              |
 | Generator diagnostics  | TypeScript configuration, syntax, and semantic errors and unsafe-to-generate conditions throw `Error` and abort without writing output. Analyzer limitations such as spreads and duplicate event declarations are returned in each module's `warnings` and logged, but generation continues. CLI commands report thrown diagnostics and exit non-zero; `check` also exits non-zero when generated output is stale. |
 
-`load` emits `error` only when an error listener is attached, so Node's special unhandled `error` event cannot mask the rejection. `loaded` is emitted after commit and `unloaded` after state removal.
+`load` emits `error` only when an error listener is attached, so Node's special unhandled `error` event cannot mask the rejection. `loaded` is emitted after commit and `unloaded` after state removal. Exceptions thrown by observers are isolated from the lifecycle operation and reported as `IpcObserverError`; see [observer exceptions](#observer-exceptions).
 
 ### Intentional public exports
 
-The root export contains the runtime values shown above, `IpcAuthorizationError`, `IpcChannelCollisionError`, and `IpcContainerDisposedError`. Its exported types are the callback/event types (`IpcHandler`, `IpcListener`, typed Electron event/sender types), module/container registration types, option/context types, channel definition types, generator analysis/option types, and the general `MaybePromise`, `MethodsOnly`, `Serializable`, and `LoggerLike` helpers. These lower-level types are public so wrappers and tooling can describe compatible registrations without importing internal files.
+The root export contains the runtime values shown above, `IpcAuthorizationError`, `IpcChannelCollisionError`, `IpcContainerDisposedError`, and `IpcObserverError`. Its exported types are the callback/event types (`IpcHandler`, `IpcListener`, typed Electron event/sender types), module/container registration types, option/context types, channel definition types, generator analysis/option types, and the general `MaybePromise`, `MethodsOnly`, `Serializable`, and `LoggerLike` helpers. These lower-level types are public so wrappers and tooling can describe compatible registrations without importing internal files.
 
 The Rollup and Vite paths export the plugin default plus `IpcBridgeOptions`. The generator path exports `resolveIpcBridgeOptions`, `getIpcBridgeWatchTargets`, `isIpcBridgeRelevantFile`, `runIpcBridgeGeneration`, and `IpcBridgeOptions`. Compile-time API tests import all of these through the built package export map; no public-contract test imports `src`.
 
