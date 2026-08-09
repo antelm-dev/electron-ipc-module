@@ -14,6 +14,14 @@ updates:
       # release-please and would strand them on main indefinitely
       prefix: fix
       prefix-development: chore
+    ignore:
+      # TypeScript 7 is the Go port: it moved the Compiler API off the package
+      # root export (`exports["."]` resolves to lib/version.cjs) and behind
+      # `typescript/unstable/*`. src/shared/ts-utils.ts and the bridge analyzer
+      # depend on that API, so a major bump cannot pass CI and the peer range
+      # pins consumers to <7. Revisit when the replacement API drops `unstable`.
+      - dependency-name: typescript
+        update-types: [version-update:semver-major]
     groups:
       dev-dependencies:
         dependency-type: development
