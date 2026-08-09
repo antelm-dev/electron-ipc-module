@@ -9,6 +9,7 @@ import {
   createIpcContainer,
   IpcChannelCollisionError,
   IpcContainerDisposedError,
+  IpcObserverError,
 } from "../../src/runtime/ipc-container.js";
 import type { IpcCleanup, IpcModuleRegister } from "../../src/runtime/ipc-module.js";
 
@@ -321,6 +322,132 @@ describe("createIpcContainer", () => {
     ).rejects.toThrow(boom);
 
     expect(spy).toHaveBeenCalledWith("broken", boom);
+  });
+
+  describe("observer exceptions", () => {
+    const throwOnce = (error: Error) => {
+      let thrown = false;
+      return vi.fn(() => {
+        if (thrown) return;
+        thrown = true;
+        throw error;
+      });
+    };
+
+    it("keeps loadAll committed when a loaded observer throws", async () => {
+      const container = createIpcContainer();
+      container.on("loaded", throwOnce(new Error("observer exploded")));
+
+      const result = await container.loadAll({
+        config: fakeRegister(["config:get"]),
+        auth: fakeRegister(["auth:login"]),
+      });
+
+      // The batch resolved, so every module in it must actually be loaded.
+      expect(result).toEqual({ config: ["config:get"], auth: ["auth:login"] });
+      expect(container.names).toEqual(["config", "auth"]);
+      expect(container.allChannels).toEqual(["config:get", "auth:login"]);
+      expect(container.has("config")).toBe(true);
+    });
+
+    it("keeps load resolved and the module registered when a loaded observer throws", async () => {
+      const container = createIpcContainer();
+      container.on("loaded", () => {
+        throw new Error("observer exploded");
+      });
+
+      await expect(container.load("test", fakeRegister(["test:ping"]))).resolves.toEqual([
+        "test:ping",
+      ]);
+      expect(container.has("test")).toBe(true);
+      expect(container.getChannels("test")).toEqual(["test:ping"]);
+    });
+
+    it("reports a throwing loaded observer as IpcObserverError on error", async () => {
+      const spy = vi.fn();
+      const boom = new Error("observer exploded");
+      const container = createIpcContainer();
+      container.on("error", spy);
+      container.on("loaded", () => {
+        throw boom;
+      });
+
+      await container.load("test", fakeRegister(["test:ping"]));
+
+      expect(spy).toHaveBeenCalledOnce();
+      const [name, reported] = spy.mock.calls[0]!;
+      expect(name).toBe("test");
+      expect(reported).toBeInstanceOf(IpcObserverError);
+      expect(reported.event).toBe("loaded");
+      expect(reported.moduleName).toBe("test");
+      expect(reported.reason).toBe(boom);
+    });
+
+    it("keeps unload resolved and the module removed when an unloaded observer throws", async () => {
+      const container = createIpcContainer();
+      await container.load("test", fakeRegister(["test:ping"]));
+      container.on("unloaded", () => {
+        throw new Error("observer exploded");
+      });
+
+      await expect(container.unload("test")).resolves.toBe(true);
+      expect(container.has("test")).toBe(false);
+      expect(container.names).toEqual([]);
+    });
+
+    it("does not let a throwing unloaded observer mask a cleanup failure", async () => {
+      const cleanupBoom = new Error("cleanup failed");
+      const container = createIpcContainer();
+      await container.load("test", async () => ({
+        channels: [
+          [
+            "test:ping",
+            () => {
+              throw cleanupBoom;
+            },
+          ],
+        ],
+      }));
+      container.on("unloaded", () => {
+        throw new Error("observer exploded");
+      });
+
+      // The cleanup error is the real failure and must survive intact.
+      await expect(container.unload("test")).rejects.toThrow(AggregateError);
+      await expect(container.unload("test")).resolves.toBe(false);
+    });
+
+    it("does not let a throwing error observer replace the original failure", async () => {
+      const registerBoom = new Error("register failed");
+      const container = createIpcContainer();
+      container.on("error", () => {
+        throw new Error("observer exploded");
+      });
+
+      await expect(
+        container.load("broken", async () => {
+          throw registerBoom;
+        }),
+      ).rejects.toThrow(registerBoom);
+      expect(container.has("broken")).toBe(false);
+    });
+
+    it("survives an error observer that throws while reporting another observer", async () => {
+      const container = createIpcContainer();
+      container.on("loaded", () => {
+        throw new Error("loaded observer exploded");
+      });
+      container.on("error", () => {
+        throw new Error("error observer exploded too");
+      });
+
+      // Terminal case: there is no channel left to report on, so the lifecycle
+      // operation still has to succeed rather than surface either exception.
+      await expect(container.load("test", fakeRegister(["test:ping"]))).resolves.toEqual([
+        "test:ping",
+      ]);
+      expect(container.has("test")).toBe(true);
+    });
   });
 
   it("getChannels returns empty array for unknown module", () => {

@@ -9,6 +9,7 @@ import {
   IpcAuthorizationError,
   IpcChannelCollisionError,
   IpcContainerDisposedError,
+  IpcObserverError,
   listen,
   listenOnce,
   type AnalyzedIpcModule,
@@ -86,6 +87,7 @@ listenOnce(() => undefined);
 new IpcAuthorizationError("channel");
 new IpcChannelCollisionError("channel", "one", "two");
 new IpcContainerDisposedError();
+new IpcObserverError("loaded", "module", new Error("reason"));
 
 const pluginOptions: PluginOptions = { ipcDir: "./ipc" };
 ipcBridge(pluginOptions);
