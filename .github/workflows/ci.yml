@@ -54,6 +54,54 @@ jobs:
       - run: pnpm run test:api
       - run: pnpm run test
 
+  packed-consumer:
+    # Installs the packed tarball into an empty project so the published
+    # dependency set is exercised instead of this repository's devDependencies.
+    # Catches entry points that import a package we never declared.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6.0.9
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build
+      - name: Pack the publishable artifact
+        # npm, not pnpm: pnpm pack has no --ignore-scripts, and prepack would
+        # re-run the full check suite the other jobs already cover.
+        run: npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP"
+      - name: Install it into an empty project
+        working-directory: ${{ runner.temp }}
+        # npm installs peer dependencies by default, so a missing declaration
+        # surfaces here as a load failure below rather than as a warning.
+        run: |
+          mkdir consumer && cd consumer
+          npm init -y >/dev/null
+          npm install "$RUNNER_TEMP"/electron-ipc-module-*.tgz
+      - name: The CLI loads and parses arguments
+        working-directory: ${{ runner.temp }}/consumer
+        run: ./node_modules/.bin/electron-ipc-module --help
+      - name: The generator entry points load
+        working-directory: ${{ runner.temp }}/consumer
+        # The `.` runtime entry is deliberately excluded: it imports `electron`,
+        # which is a path stub outside a real Electron main process, so plain
+        # Node cannot load it. Only these two run under Node, and they are the
+        # ones that reach for `typescript`.
+        run: |
+          cat > probe.mjs <<'EOF'
+          const generator = await import("electron-ipc-module/generator");
+          const rollupPlugin = await import("electron-ipc-module/rollup-plugin");
+          if (typeof generator.runIpcBridgeGeneration !== "function") {
+            throw new Error("generator entry point is missing runIpcBridgeGeneration");
+          }
+          if (typeof rollupPlugin.default !== "function") {
+            throw new Error("rollup-plugin entry point is missing its default export");
+          }
+          EOF
+          node probe.mjs
+
   example:
     # Builds example/ end to end: generation, compilation, and the sandboxed
     # CommonJS preload bundle. Electron is never launched, only built against.
