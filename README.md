@@ -46,7 +46,7 @@ npm install electron-ipc-module
 
 ## Upgrading to 1.0
 
-Version 1.0 stabilizes the API shipped in 0.6.2; an application already using 0.6.2 needs no source changes. Install the release candidate with `npm install electron-ipc-module@next`, regenerate the committed bridge, and run `electron-ipc-module check` in CI. Applications on 0.6.1 or earlier should upgrade through 0.6.2 first and review the breaking changes recorded in the [changelog](./CHANGELOG.md).
+Version 1.0 stabilizes the API shipped in 0.6.2; an application already using 0.6.2 needs no source changes. Install the stable release with `npm install electron-ipc-module`, regenerate the committed bridge, and run `electron-ipc-module check` in CI. Applications on 0.6.1 or earlier should upgrade through 0.6.2 first and review the breaking changes recorded in the [changelog](./CHANGELOG.md).
 
 ## Compatibility contract
 
