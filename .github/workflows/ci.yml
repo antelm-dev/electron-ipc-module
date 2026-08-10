@@ -38,7 +38,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: [20, 22]
+        # 20.17.0 is the exact `engines` floor, pinned rather than left as `20`
+        # so the lowest supported version is the one actually exercised: the
+        # generator calls path.matchesGlob, which does not exist below it.
+        node: [20.17.0, 22]
         electron: [41, 42, 43]
     runs-on: ubuntu-latest
     steps:

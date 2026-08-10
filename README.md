@@ -46,7 +46,7 @@ npm install electron-ipc-module
 ## Compatibility contract
 
 - **Modules:** ESM only. Use `import`; CommonJS `require()` is not a supported entry point. This applies to the package itself — your preload output is a separate question, covered in [preload constraints](#preload-constraints).
-- **Node.js:** Node 20 and every even/odd release from Node 22 onward (`20 || >=22`). CI covers Node 20 and 22.
+- **Node.js:** `^20.17.0 || >=22.5.0`. The floor is not the start of a major line because the generator uses `path.matchesGlob`, added in 20.17.0 and 22.5.0; below it, a glob `ipcDir` throws. CI pins one matrix entry to 20.17.0 exactly, so the lowest supported version is the one tested rather than the one claimed.
 - **Electron:** two different claims, deliberately kept apart.
   - The peer range is `>=12`, an **API-compatibility** claim: nothing here uses an Electron API newer than 12. It is a permissive install-time constraint because npm enforces it, and refusing to install on a version that works helps nobody.
   - **Build/type-checked** support is narrower. CI installs the latest patch of Electron's three currently supported stable majors — 41, 42, and 43 when this contract was frozen — and runs the type check, the public-API check, and the unit suite against each, advancing with [Electron's latest-three-stable support policy](https://www.electronjs.org/docs/latest/tutorial/electron-timelines). Between 12 and 41 the package should work and is not checked; bug reports from that range are welcome and will be treated as real.
