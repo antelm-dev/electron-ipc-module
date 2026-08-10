@@ -1,6 +1,7 @@
 import type { StandardSchemaV1 } from "@standard-schema/spec";
 
 import {
+  defineIpcEvents,
   defineIpcModule,
   handle,
   handleOnce,
@@ -375,5 +376,252 @@ describe("defineIpcModule", () => {
     const handler = handlers.get("math:add");
     expect(handler).toBeTypeOf("function");
     expect(await handler?.({} as never, 2, 3)).toBe(5);
+  });
+});
+
+describe("defineIpcModule event prefixing", () => {
+  /** A sender rich enough to show what the proxy forwards, binds, and rewrites. */
+  const createSender = () => ({
+    id: 7,
+    send: vi.fn(),
+    describe(this: { id: number }) {
+      return this.id;
+    },
+  });
+
+  it("prefixes senderFrame.send and leaves other members intact", async () => {
+    const { handlers, ipc } = createIpc();
+    const senderFrame = createSender();
+    const seen: Record<string, unknown> = {};
+
+    await defineIpcModule(
+      "profile",
+      {
+        save: handle((event) => {
+          const frame = event.senderFrame as unknown as ReturnType<typeof createSender>;
+          frame.send("updated" as never, "id" as never);
+          // A plain value passes through; a method stays bound to the real
+          // target, which `Reflect.get` alone would not guarantee.
+          seen.id = frame.id;
+          seen.described = frame.describe();
+        }),
+      },
+      { eventPrefix: true },
+    )(ipc as never);
+
+    await handlers.get("profile:save")?.({ sender: createSender(), senderFrame });
+
+    expect(senderFrame.send).toHaveBeenCalledWith("profile:updated", "id");
+    expect(seen).toEqual({ id: 7, described: 7 });
+  });
+
+  it("passes through and binds members of the event itself", async () => {
+    const { handlers, ipc } = createIpc();
+    const seen: Record<string, unknown> = {};
+
+    await defineIpcModule(
+      "profile",
+      {
+        save: handle((event) => {
+          const raw = event as unknown as { processId: number; describeSelf(): number };
+          // Anything that is not sender/senderFrame/reply falls through the
+          // proxy: data unchanged, methods still bound to the real event.
+          seen.processId = raw.processId;
+          seen.described = raw.describeSelf();
+        }),
+      },
+      { eventPrefix: true },
+    )(ipc as never);
+
+    await handlers.get("profile:save")?.({
+      processId: 42,
+      sender: createSender(),
+      senderFrame: null,
+      describeSelf(this: { processId: number }) {
+        return this.processId;
+      },
+    });
+
+    expect(seen).toEqual({ processId: 42, described: 42 });
+  });
+
+  it("keeps a null senderFrame null rather than wrapping it", async () => {
+    const { handlers, ipc } = createIpc();
+    let frame: unknown = "unset";
+
+    await defineIpcModule(
+      "profile",
+      { save: handle((event) => void (frame = event.senderFrame)) },
+      { eventPrefix: true },
+    )(ipc as never);
+
+    await handlers.get("profile:save")?.({ sender: createSender(), senderFrame: null });
+
+    expect(frame).toBeNull();
+  });
+
+  it("prefixes event.reply on a listener", async () => {
+    const { listeners, ipc } = createIpc();
+    const reply = vi.fn();
+
+    await defineIpcModule(
+      "profile",
+      { notify: listen((event) => event.reply("noted" as never, 1 as never)) },
+      { eventPrefix: true },
+    )(ipc as never);
+
+    listeners.get("profile:notify")?.({ reply, sender: createSender(), senderFrame: null });
+
+    expect(reply).toHaveBeenCalledWith("profile:noted", 1);
+  });
+
+  it("uses a string eventPrefix in place of the module prefix", async () => {
+    const { handlers, ipc } = createIpc();
+    const sender = createSender();
+
+    await defineIpcModule(
+      "profile",
+      { save: handle((event) => event.sender.send("updated" as never, "id" as never)) },
+      { eventPrefix: "app" },
+    )(ipc as never);
+
+    // The registered channel still uses the module prefix; only the emitted
+    // event channel takes the custom one.
+    expect(handlers.has("profile:save")).toBe(true);
+    await handlers.get("profile:save")?.({ sender, senderFrame: null });
+    expect(sender.send).toHaveBeenCalledWith("app:updated", "id");
+  });
+});
+
+describe("defineIpcModule guard dispatch", () => {
+  it("registers the raw callback when nothing needs wrapping", async () => {
+    const { handlers, ipc } = createIpc();
+    const channel = handle(() => "pong");
+
+    await defineIpcModule("fast", { ping: channel })(ipc as never);
+
+    // Identity, not just behaviour: with no authorize, validate, or
+    // eventPrefix there is nothing to wrap, and wrapping anyway would put a
+    // proxy on every call for no reason.
+    expect(handlers.get("fast:ping")).toBe(channel.fn);
+  });
+
+  it("wraps a listener for eventPrefix even without authorize or validate", async () => {
+    const { listeners, ipc } = createIpc();
+    const sender = { send: vi.fn() };
+
+    await defineIpcModule(
+      "profile",
+      { touch: listen((event) => event.sender.send("touched" as never)) },
+      { eventPrefix: true },
+    )(ipc as never);
+
+    listeners.get("profile:touch")?.({ sender, senderFrame: null });
+
+    expect(sender.send).toHaveBeenCalledWith("profile:touched");
+  });
+
+  it("runs authorize even when no validator is configured", async () => {
+    const { handlers, ipc } = createIpc();
+    const authorize = vi.fn(() => true);
+    const body = vi.fn(() => "ok");
+
+    await defineIpcModule("secure", { read: handle(body) }, { authorize })(ipc as never);
+
+    await expect(handlers.get("secure:read")?.({} as never)).resolves.toBe("ok");
+    expect(authorize).toHaveBeenCalledOnce();
+    expect(body).toHaveBeenCalledOnce();
+  });
+
+  it("logs when the onListenerError hook itself throws", async () => {
+    const { listeners, ipc } = createIpc();
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const hookFailure = new Error("hook exploded");
+
+    await defineIpcModule(
+      "demo",
+      {
+        notify: listen(() => {
+          throw new Error("listener failed");
+        }),
+      },
+      {
+        onListenerError: () => {
+          throw hookFailure;
+        },
+      },
+    )(ipc as never);
+
+    listeners.get("demo:notify")?.({} as never);
+
+    // The hook's own failure has nowhere to be reported but the console, and
+    // must never propagate into Electron's emitter.
+    expect(error).toHaveBeenCalledWith(
+      '[electron-ipc-module] onListenerError failed for "demo:notify"',
+      hookFailure,
+    );
+  });
+
+  it("aggregates a rollback failure with the error that caused the rollback", async () => {
+    const { ipc } = createIpc();
+    const readyFailure = new Error("ready failed");
+    const cleanupFailure = new Error("removeHandler failed");
+    ipc.removeHandler.mockImplementation(() => {
+      throw cleanupFailure;
+    });
+
+    const register = defineIpcModule(
+      "demo",
+      { ping: handle(() => "pong") },
+      {
+        ready: () => {
+          throw readyFailure;
+        },
+      },
+    );
+
+    const failure = await register(ipc as never).catch((thrown: unknown) => thrown);
+
+    expect(failure).toBeInstanceOf(AggregateError);
+    // Original error first, so the cause is not buried under the fallout.
+    expect((failure as AggregateError).errors).toEqual([readyFailure, cleanupFailure]);
+  });
+});
+
+describe("IpcValidationError message", () => {
+  it("renders object path segments and issues that carry no path", async () => {
+    const { handlers, ipc } = createIpc();
+
+    await defineIpcModule(
+      "secure",
+      { save: handle(vi.fn()) },
+      {
+        validate: {
+          save: schemaOf(() => ({
+            issues: [
+              // Standard Schema allows a segment to be a `{ key }` object
+              // rather than a bare string.
+              { message: "bad", path: ["user", { key: "name" }] },
+              // …and allows no path at all, which must not render a stray ": ".
+              { message: "must be set" },
+            ],
+          })),
+        },
+      },
+    )(ipc as never);
+
+    const rejection = handlers.get("secure:save")?.({ sender: {}, senderFrame: null }, 1);
+
+    await expect(rejection).rejects.toThrow(
+      'IPC payload failed validation for channel "secure:save": user.name: bad; must be set',
+    );
+  });
+});
+
+describe("defineIpcEvents", () => {
+  it("is a type-level declaration with no runtime payload", () => {
+    // The bridge generator reads its type argument; the value must stay inert
+    // so nothing is tempted to depend on it at runtime.
+    expect(defineIpcEvents<{ changed: [value: string] }>()).toEqual({});
   });
 });

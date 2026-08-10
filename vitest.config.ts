@@ -21,14 +21,14 @@ export default defineConfig({
       reporter: ["text-summary", "lcov"],
       // A ratchet at the measured floor, not an aspiration: this exists to stop
       // coverage falling, and a threshold nobody can meet gets deleted rather
-      // than met. Branches sit lowest because ipc-bridge-analyzer.ts and the
-      // authorize/validate/eventPrefix matrix in ipc-module.ts have many
-      // untaken paths. Raise these as that changes; never lower them.
+      // than met. Branches sit lowest because of ipc-bridge-analyzer.ts, now
+      // the weakest file by some way. Raise these as that changes; never lower
+      // them.
       thresholds: {
-        statements: 87,
-        branches: 72,
-        functions: 94,
-        lines: 90,
+        statements: 90,
+        branches: 79,
+        functions: 96,
+        lines: 93,
       },
     },
   },
