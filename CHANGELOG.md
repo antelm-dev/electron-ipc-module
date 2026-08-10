@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.2](https://github.com/antelm-dev/electron-ipc-module/compare/v0.6.1...v0.6.2) (2026-08-10)
+
+
+### Bug Fixes
+
+* **bridge:** harden the 1.0 compatibility contract ([#41](https://github.com/antelm-dev/electron-ipc-module/issues/41)) ([c4d3b77](https://github.com/antelm-dev/electron-ipc-module/commit/c4d3b776be0a401a9a6b2fcff3d3aafdd983570f))
+
 ## [0.6.1](https://github.com/antelm-dev/electron-ipc-module/compare/v0.6.0...v0.6.1) (2026-08-10)
 
 
