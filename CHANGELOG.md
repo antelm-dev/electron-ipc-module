@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.6.0](https://github.com/antelm-dev/electron-ipc-module/compare/v0.5.0...v0.6.0) (2026-08-10)
+
+
+### ⚠ BREAKING CHANGES
+
+* **exports:** AnalyzedIpcModule, ChannelInfo, EmittedEventInfo, IpcBridgeOptions, and ResolvedIpcBridgeOptions are no longer exported from "electron-ipc-module". Import them from "electron-ipc-module/generator", which also re-exports LoggerLike, or from "electron-ipc-module/rollup-plugin" for IpcBridgeOptions. Runtime types and values on the root are unchanged.
+* the Node floor moves to >=22.5.0. `fs.globSync` landed in 22.0.0, and the 20.x line has no equivalent.
+
+### Features
+
+* accept Standard Schema validators and glob with node:fs ([3627c82](https://github.com/antelm-dev/electron-ipc-module/commit/3627c82f330965f41163e37c919a34eed63000fe))
+
+
+### Bug Fixes
+
+* **runtime:** detect a callable Standard Schema before a callback ([5491148](https://github.com/antelm-dev/electron-ipc-module/commit/5491148ab4453dc2997530e334fb83ad4df85468))
+
+
+### Code Refactoring
+
+* **exports:** keep generator types off the root entry point ([78c1214](https://github.com/antelm-dev/electron-ipc-module/commit/78c12146a216225eb3baab53f675ffe3bdb1701d))
+
 ## [0.5.0](https://github.com/antelm-dev/electron-ipc-module/compare/v0.4.0...v0.5.0) (2026-08-10)
 
 
