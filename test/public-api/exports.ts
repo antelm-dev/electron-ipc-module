@@ -7,6 +7,7 @@ import {
   handle,
   handleOnce,
   IpcAuthorizationError,
+  IpcValidationError,
   IpcChannelCollisionError,
   IpcContainerDisposedError,
   IpcObserverError,
@@ -23,6 +24,7 @@ import {
   type EmittedEventInfo,
   type IpcBridgeOptions,
   type IpcChannelContext,
+  type IpcChannelValidator,
   type IpcCleanup,
   type IpcContainerEmitter,
   type IpcContainerEvents,
@@ -52,6 +54,7 @@ import {
   resolveIpcBridgeOptions,
   runIpcBridgeGeneration,
 } from "electron-ipc-module/generator";
+import type { StandardSchemaV1 } from "@standard-schema/spec";
 import type { IpcMain } from "electron";
 
 type Events = { changed: [value: string] };
@@ -63,12 +66,21 @@ const handler = helpers.handle<[value: string], number>((event, value) => {
 const listener = helpers.listen<[value: string]>((event, value) => {
   event.reply("changed", value);
 });
+// A Standard Schema whose output matches the listener's declared parameters, so
+// this file fails to compile if the two stop lining up.
+const valueSchema: StandardSchemaV1<readonly unknown[], [value: string]> = {
+  "~standard": {
+    version: 1,
+    vendor: "public-api",
+    validate: (args) => ({ value: [String((args as readonly unknown[])[0])] }),
+  },
+};
 const registration = defineIpcModule(
   "public",
   { handler, listener },
   {
     authorize: () => true,
-    validate: { handler: () => undefined },
+    validate: { handler: () => undefined, listener: valueSchema },
     eventPrefix: true,
   },
 );
@@ -89,6 +101,7 @@ handleOnce(() => undefined);
 listen(() => undefined);
 listenOnce(() => undefined);
 new IpcAuthorizationError("channel");
+new IpcValidationError("channel", [{ message: "invalid" }]);
 new IpcChannelCollisionError("channel", "one", "two");
 new IpcContainerDisposedError();
 new IpcObserverError("loaded", "module", new Error("reason"));
@@ -110,6 +123,7 @@ type PublicTypes = [
   EmittedEventInfo,
   IpcBridgeOptions,
   IpcChannelContext,
+  IpcChannelValidator,
   IpcCleanup,
   IpcContainerEmitter,
   IpcContainerEvents,

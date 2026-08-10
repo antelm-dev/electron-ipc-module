@@ -1,6 +1,6 @@
+import { globSync } from "node:fs";
 import { basename, resolve } from "node:path";
 
-import { globSync } from "glob";
 import ts from "typescript";
 
 import {
@@ -14,15 +14,18 @@ import {
 import type { AnalyzedIpcModule, ChannelInfo, EmittedEventInfo } from "../shared/types/bridge.js";
 import { resolveIpcPattern, toPosixPath } from "../shared/utils.js";
 
-/** Resolve the `ipcDir` glob to the absolute POSIX paths it matches. */
+/**
+ * Resolve the `ipcDir` glob to the absolute POSIX paths it matches.
+ *
+ * The pattern is normalized to forward slashes first: a backslash is an escape
+ * character to the matcher, so a Windows-style `.\src\ipc` would otherwise
+ * silently match nothing. Directories are left in — `**` matches them too, but
+ * they can never be a program source file, so {@link isAnalyzableIpcFile}
+ * discards them anyway.
+ */
 function collectMatchedIpcFiles(ipcDir: string): Set<string> {
-  const pattern = resolveIpcPattern(ipcDir);
-  return new Set(
-    globSync(pattern, {
-      nodir: true,
-      absolute: true,
-    }).map((filePath) => toPosixPath(resolve(filePath))),
-  );
+  const pattern = toPosixPath(resolveIpcPattern(ipcDir));
+  return new Set(globSync(pattern).map((filePath) => toPosixPath(resolve(filePath))));
 }
 
 /** A matched, non-test `*.ipc.ts` file is eligible for analysis. */

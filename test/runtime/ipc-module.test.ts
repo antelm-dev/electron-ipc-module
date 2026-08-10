@@ -1,3 +1,5 @@
+import type { StandardSchemaV1 } from "@standard-schema/spec";
+
 import {
   defineIpcModule,
   handle,
@@ -5,8 +7,23 @@ import {
   listen,
   listenOnce,
   IpcAuthorizationError,
+  IpcValidationError,
 } from "../../src/runtime/ipc-module.js";
 import { vi, describe, it, expect } from "vitest";
+
+/**
+ * A minimal Standard Schema, so the contract is exercised without pulling in
+ * Zod or Valibot just to prove the shape is honored.
+ */
+const schemaOf = <TOutput extends readonly unknown[]>(
+  validate: (args: readonly unknown[]) => StandardSchemaV1.Result<TOutput>,
+): StandardSchemaV1<readonly unknown[], TOutput> => ({
+  "~standard": {
+    version: 1,
+    vendor: "test",
+    validate: (value) => validate(value as readonly unknown[]),
+  },
+});
 
 const createIpc = () => {
   const handlers = new Map<string, (...args: unknown[]) => unknown>();
@@ -164,6 +181,76 @@ describe("defineIpcModule", () => {
       error,
     );
     expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("passes a schema validator's parsed output to the handler", async () => {
+    const { handlers, ipc } = createIpc();
+    const handler = vi.fn((_event, count: number) => count * 2);
+
+    await defineIpcModule(
+      "secure",
+      { double: handle(handler) },
+      {
+        // Coercion has to reach the handler, otherwise validating a payload and
+        // acting on it would disagree about what was actually checked.
+        validate: { double: schemaOf((args) => ({ value: [Number(args[0])] as [number] })) },
+      },
+    )(ipc as never);
+
+    const event = { sender: {}, senderFrame: null };
+    await expect(handlers.get("secure:double")?.(event, "21")).resolves.toBe(42);
+    expect(handler).toHaveBeenCalledWith(event, 21);
+  });
+
+  it("rejects a handler with IpcValidationError when a schema reports issues", async () => {
+    const { handlers, ipc } = createIpc();
+    const handler = vi.fn();
+
+    await defineIpcModule(
+      "secure",
+      { save: handle(handler) },
+      {
+        validate: {
+          save: schemaOf(() => ({ issues: [{ message: "expected string", path: ["0", "id"] }] })),
+        },
+      },
+    )(ipc as never);
+
+    const rejection = handlers.get("secure:save")?.({ sender: {}, senderFrame: null }, 1);
+    await expect(rejection).rejects.toBeInstanceOf(IpcValidationError);
+    await expect(rejection).rejects.toThrow('channel "secure:save": 0.id: expected string');
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("awaits an asynchronous schema and reports its issues on a listener", async () => {
+    const { listeners, ipc } = createIpc();
+    const listener = vi.fn();
+    const onListenerError = vi.fn();
+
+    await defineIpcModule(
+      "secure",
+      { track: listen(listener) },
+      {
+        validate: {
+          track: {
+            "~standard": {
+              version: 1,
+              vendor: "test",
+              validate: async () => ({ issues: [{ message: "not allowed" }] }),
+            },
+          },
+        },
+        onListenerError,
+      },
+    )(ipc as never);
+
+    listeners.get("secure:track")?.({ sender: {}, senderFrame: null }, "payload");
+    await vi.waitFor(() => expect(onListenerError).toHaveBeenCalled());
+
+    const [error] = onListenerError.mock.calls[0] as [IpcValidationError];
+    expect(error).toBeInstanceOf(IpcValidationError);
+    expect(error.issues).toEqual([{ message: "not allowed" }]);
+    expect(listener).not.toHaveBeenCalled();
   });
 
   it("preserves registration collisions and rolls back earlier channels", async () => {

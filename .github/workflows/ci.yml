@@ -38,10 +38,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Latest of each line. This job cannot run at the `engines` floor:
-        # vitest 4 and vite 8 need Node >=20.19 themselves. `packed-consumer`
-        # covers the floor against the published artifact instead.
-        node: [20, 22]
+        # Latest of each supported line. `packed-consumer` runs at the exact
+        # `engines` floor against the published artifact.
+        node: [22, 24]
         electron: [41, 42, 43]
     runs-on: ubuntu-latest
     steps:
@@ -76,16 +75,16 @@ jobs:
     # dependency set is exercised instead of this repository's devDependencies.
     # Catches entry points that import a package we never declared.
     #
-    # Runs at the exact `engines` floor. This is the only job that can: it
-    # drives the built artifact with plain Node instead of the dev toolchain,
-    # whose own floor (vitest 4, vite 8) is higher than the package's.
+    # Runs at the exact `engines` floor, so the Node APIs the generator needs —
+    # `path.matchesGlob` (22.5.0, which sets the floor) and `fs.globSync`
+    # (22.0.0) — are proven present rather than assumed.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6.0.9
       - uses: actions/setup-node@v7
         with:
-          node-version: 20.17.0
+          node-version: 22.5.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
@@ -128,6 +127,11 @@ jobs:
           }
           if (generator.isIpcBridgeRelevantFile("./other/profile.ipc.ts", options)) {
             throw new Error("a file outside the glob ipcDir was treated as relevant");
+          }
+          // The other API the analyzer needs from Node itself, added in 22.0.0.
+          const { globSync } = await import("node:fs");
+          if (globSync("node_modules/electron-ipc-module/package.json").length !== 1) {
+            throw new Error("fs.globSync did not match a file that exists");
           }
           EOF
           node probe.mjs
