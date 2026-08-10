@@ -68,7 +68,7 @@ function startWatch(options: IpcBridgeOptions) {
       try {
         runIpcBridgeGeneration(options);
       } catch (error) {
-        console.error(error);
+        resolved.logger.error(error);
       }
     }, 50);
   };
@@ -77,7 +77,7 @@ function startWatch(options: IpcBridgeOptions) {
     regenerate(filename == null ? undefined : toAbsolutePosix(join(ipcTarget, filename)));
   });
   watch(resolved.tsconfig, () => regenerate(resolved.tsconfig));
-  console.info(`Watching ${ipcTarget} and ${resolved.tsconfig}`);
+  resolved.logger.info(`Watching ${ipcTarget} and ${resolved.tsconfig}`);
 }
 
 export function runCli(args = process.argv.slice(2)) {
