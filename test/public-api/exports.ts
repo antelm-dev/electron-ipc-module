@@ -93,7 +93,7 @@ new IpcChannelCollisionError("channel", "one", "two");
 new IpcContainerDisposedError();
 new IpcObserverError("loaded", "module", new Error("reason"));
 
-const pluginOptions: PluginOptions = { ipcDir: "./ipc" };
+const pluginOptions: PluginOptions = { ipcDir: "./ipc", logger: console satisfies LoggerLike };
 ipcBridge(pluginOptions);
 resolveIpcBridgeOptions(pluginOptions);
 getIpcBridgeWatchTargets(pluginOptions);

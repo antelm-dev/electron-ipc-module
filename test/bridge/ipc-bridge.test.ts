@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 import {
   getIpcBridgeWatchTargets,
@@ -192,6 +192,33 @@ describe("runIpcBridgeGeneration", () => {
     expect(spread?.warnings).toContain(
       "Spread in channels object - those entries cannot be typed in the bridge",
     );
+  });
+
+  it("routes progress and analyzer warnings to a supplied logger", () => {
+    const logger = {
+      debug: vi.fn(),
+      error: vi.fn(),
+      info: vi.fn(),
+      log: vi.fn(),
+      warn: vi.fn(),
+    };
+    const consoleInfo = vi.spyOn(console, "info").mockImplementation(() => {});
+
+    runIpcBridgeGeneration({
+      ipcDir: FIXTURE_IPC_DIR,
+      outFile,
+      tsconfig: FIXTURE_TSCONFIG,
+      logger,
+    });
+
+    expect(logger.info).toHaveBeenCalledWith("Analyzing IPC modules...");
+    expect(logger.warn).toHaveBeenCalledWith(
+      "[spread] Spread in channels object - those entries cannot be typed in the bridge",
+    );
+    // The default logger drops debug; a supplied one is trusted with all of it.
+    expect(logger.debug).toHaveBeenCalled();
+    // Nothing leaks to the console once a logger is supplied.
+    expect(consoleInfo).not.toHaveBeenCalled();
   });
 
   it("collects emitted events from createIpcHelpers", () => {
