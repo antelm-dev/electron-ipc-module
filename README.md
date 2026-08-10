@@ -10,6 +10,7 @@ Modular, type-safe IPC for Electron. Declare handlers in the main process, load 
 
 - [Features](#features)
 - [Installation](#installation)
+- [Upgrading to 1.0](#upgrading-to-10)
 - [Compatibility contract](#compatibility-contract)
 - [Quick start](#quick-start)
 - [Preload constraints](#preload-constraints)
@@ -42,6 +43,10 @@ npm install electron-ipc-module
 ```
 
 **Peer dependencies:** `electron >= 12` and `typescript >= 5 < 7`. The generator, the CLI, and the Rollup plugin load the TypeScript compiler at runtime to analyse your IPC modules, so it is a real requirement rather than a build-time convenience — bundlers that transpile TypeScript without installing the compiler, Vite among them, would otherwise fail at first run. See the [compatibility contract](#compatibility-contract).
+
+## Upgrading to 1.0
+
+Version 1.0 stabilizes the API shipped in 0.6.2; an application already using 0.6.2 needs no source changes. Install the release candidate with `npm install electron-ipc-module@next`, regenerate the committed bridge, and run `electron-ipc-module check` in CI. Applications on 0.6.1 or earlier should upgrade through 0.6.2 first and review the breaking changes recorded in the [changelog](./CHANGELOG.md).
 
 ## Compatibility contract
 
