@@ -52,7 +52,11 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm add --save-dev --ignore-workspace-root-check electron@${{ matrix.electron }}
+      # --ignore-scripts: electron's postinstall require()s the ESM-only
+      # @electron/get, which needs Node >=20.19. Only its types are used here
+      # and the binary download is already skipped, so the script is dead
+      # weight that would otherwise dictate the Node floor CI can test.
+      - run: pnpm add --save-dev --ignore-workspace-root-check --ignore-scripts electron@${{ matrix.electron }}
       - run: pnpm run typecheck
       - run: pnpm run test:api
       - run: pnpm run test
