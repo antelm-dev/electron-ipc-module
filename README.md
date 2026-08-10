@@ -248,7 +248,7 @@ defineIpcModule("profile", channels, {
 });
 ```
 
-Validators **inspect, they do not transform**. The channel callback receives the original arguments, so a validator's return value is discarded — parsing with a schema that coerces or strips fields does not change what the handler sees. Do that work inside the handler.
+Callback validators only inspect the original arguments: their return value is discarded. Standard Schema validators are different—their parsed output replaces the callback arguments, so coercion and field stripping carry through to the handler.
 
 For `handle` channels, rejected promises propagate back through `ipcRenderer.invoke`. For fire-and-forget `listen` channels, failures are caught and passed to `onListenerError` (or logged) so they never become unhandled rejections.
 
