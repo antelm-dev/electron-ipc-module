@@ -16,7 +16,18 @@ import {
   toAbsolutePosix,
 } from "../shared/utils.js";
 
-export type { IpcBridgeOptions } from "../shared/types/bridge.js";
+// The generator's whole type surface lives on this entry point, not the root:
+// these describe how the bridge is produced, not what a main-process consumer
+// depends on. `LoggerLike` rides along so a caller configuring `logger` does
+// not need a second import.
+export type {
+  AnalyzedIpcModule,
+  ChannelInfo,
+  EmittedEventInfo,
+  IpcBridgeOptions,
+  ResolvedIpcBridgeOptions,
+} from "../shared/types/bridge.js";
+export type { LoggerLike } from "../shared/types/runtime.js";
 
 /** Apply defaults and normalize paths for the bridge options. */
 export function resolveIpcBridgeOptions(options: IpcBridgeOptions = {}): ResolvedIpcBridgeOptions {

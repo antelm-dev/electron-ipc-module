@@ -383,9 +383,13 @@ Open an issue if you have a case this pattern genuinely cannot cover.
 
 ### Intentional public exports
 
-The root export contains the runtime values shown above, `IpcAuthorizationError`, `IpcValidationError`, `IpcChannelCollisionError`, `IpcContainerDisposedError`, and `IpcObserverError`. Its exported types are the callback/event types (`IpcHandler`, `IpcListener`, typed Electron event/sender types), module/container registration types, option/context/validator types, channel definition types, generator analysis/option types, and the general `MaybePromise`, `MethodsOnly`, `Serializable`, `IpcUncloneable`, and `LoggerLike` helpers. These lower-level types are public so wrappers and tooling can describe compatible registrations without importing internal files.
+**The root is runtime-only.** It exports the runtime values shown above, `IpcAuthorizationError`, `IpcValidationError`, `IpcChannelCollisionError`, `IpcContainerDisposedError`, and `IpcObserverError`. Its exported types are the callback/event types (`IpcHandler`, `IpcListener`, typed Electron event/sender types), module/container registration types, option/context/validator types, channel definition types, and the general `MaybePromise`, `MethodsOnly`, `Serializable`, `IpcUncloneable`, and `LoggerLike` helpers. These lower-level types are public so wrappers and tooling can describe compatible registrations without importing internal files.
 
-The Rollup and Vite paths export the plugin default plus `IpcBridgeOptions`. The generator path exports `resolveIpcBridgeOptions`, `getIpcBridgeWatchTargets`, `isIpcBridgeRelevantFile`, `runIpcBridgeGeneration`, and `IpcBridgeOptions`. Compile-time API tests import all of these through the built package export map; no public-contract test imports `src`.
+**The generator's own types are not on the root.** `IpcBridgeOptions`, `ResolvedIpcBridgeOptions`, `AnalyzedIpcModule`, `ChannelInfo`, and `EmittedEventInfo` describe how the bridge is _produced_, not what a main-process consumer depends on, so they live on `electron-ipc-module/generator` alongside the functions that return them. Keeping them off the root means the analyzer's output shape can change without that being a breaking change for everyone who only ever imports `defineIpcModule`.
+
+`electron-ipc-module/rollup-plugin` exports the plugin default plus `IpcBridgeOptions` and `LoggerLike` — the same import works in a Vite config, since the plugin implements Vite's compatible plugin API. `electron-ipc-module/generator` exports `resolveIpcBridgeOptions`, `getIpcBridgeWatchTargets`, `isIpcBridgeRelevantFile`, and `runIpcBridgeGeneration`, plus the five types above and `LoggerLike`.
+
+Compile-time API tests import all of this through the built package export map; no public-contract test imports `src`. The moved types are additionally asserted _absent_ from the root, so a barrel re-export cannot quietly widen the surface again.
 
 ### Rollup plugin (`electron-ipc-module/rollup-plugin`)
 

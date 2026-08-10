@@ -1,4 +1,6 @@
 export * from "./runtime/ipc-container.js";
 export * from "./runtime/ipc-module.js";
-export type * from "./shared/types/index.js";
-export type { MethodsOnly, MaybePromise, LoggerLike, Serializable } from "./shared/utils.js";
+// Runtime types only. The generator's analysis and option types live behind
+// `electron-ipc-module/generator`, so changing them is not a change to the
+// surface a main-process consumer depends on.
+export type * from "./shared/types/runtime.js";

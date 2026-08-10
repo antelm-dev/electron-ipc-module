@@ -13,16 +13,12 @@ import {
   IpcObserverError,
   listen,
   listenOnce,
-  type AnalyzedIpcModule,
   type ChannelDef,
-  type ChannelInfo,
   type ChannelType,
   type CloneableChannel,
   type HandlerDef,
   type ListenerDef,
   type DefineIpcModuleOptions,
-  type EmittedEventInfo,
-  type IpcBridgeOptions,
   type IpcChannelContext,
   type IpcChannelValidator,
   type IpcCleanup,
@@ -37,7 +33,6 @@ import {
   type LoggerLike,
   type MaybePromise,
   type MethodsOnly,
-  type ResolvedIpcBridgeOptions,
   type IpcUncloneable,
   type Serializable,
   type TypedIpcMainEvent,
@@ -53,7 +48,27 @@ import {
   isIpcBridgeRelevantFile,
   resolveIpcBridgeOptions,
   runIpcBridgeGeneration,
+  type AnalyzedIpcModule,
+  type ChannelInfo,
+  type EmittedEventInfo,
+  type IpcBridgeOptions,
+  type ResolvedIpcBridgeOptions,
 } from "electron-ipc-module/generator";
+
+// The generator's types are deliberately absent from the root. Each directive
+// below is an error today, and an *unused* directive — itself a build failure —
+// the moment one leaks back, so the narrowing cannot silently regress.
+// @ts-expect-error `AnalyzedIpcModule` belongs to "electron-ipc-module/generator"
+import type { AnalyzedIpcModule as _MovedAnalyzedIpcModule } from "electron-ipc-module";
+// @ts-expect-error `ChannelInfo` belongs to "electron-ipc-module/generator"
+import type { ChannelInfo as _MovedChannelInfo } from "electron-ipc-module";
+// @ts-expect-error `EmittedEventInfo` belongs to "electron-ipc-module/generator"
+import type { EmittedEventInfo as _MovedEmittedEventInfo } from "electron-ipc-module";
+// @ts-expect-error `IpcBridgeOptions` belongs to "electron-ipc-module/generator"
+import type { IpcBridgeOptions as _MovedIpcBridgeOptions } from "electron-ipc-module";
+// @ts-expect-error `ResolvedIpcBridgeOptions` belongs to "electron-ipc-module/generator"
+import type { ResolvedIpcBridgeOptions as _MovedResolvedOptions } from "electron-ipc-module";
+
 import type { StandardSchemaV1 } from "@standard-schema/spec";
 import type { IpcMain } from "electron";
 
