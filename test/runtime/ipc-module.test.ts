@@ -202,6 +202,50 @@ describe("defineIpcModule", () => {
     expect(handler).toHaveBeenCalledWith(event, 21);
   });
 
+  it("treats a callable schema as a schema, not as a callback validator", async () => {
+    // ArkType's schemas are callable and carry `~standard`. Discriminating on
+    // `typeof === "function"` first would invoke this as a plain callback and
+    // throw the result away, admitting a payload the schema had rejected.
+    const callableSchema = Object.assign(
+      vi.fn(() => "called as a callback"),
+      {
+        "~standard": {
+          version: 1,
+          vendor: "test",
+          validate: vi.fn((value: unknown) => {
+            const [first] = value as readonly unknown[];
+            return typeof first === "string"
+              ? { value: [first.trim()] as [string] }
+              : { issues: [{ message: "expected a string" }] };
+          }),
+        },
+      } satisfies StandardSchemaV1<readonly unknown[], [string]>,
+    );
+
+    const { handlers, ipc } = createIpc();
+    const handler = vi.fn((_event, name: string) => `hi ${name}`);
+    await defineIpcModule(
+      "secure",
+      { greet: handle(handler) },
+      { validate: { greet: callableSchema } },
+    )(ipc as never);
+
+    const event = { sender: {}, senderFrame: null };
+    const call = handlers.get("secure:greet");
+
+    // The schema's own API runs, and its parsed output reaches the handler.
+    await expect(call?.(event, "  ada  ")).resolves.toBe("hi ada");
+    expect(callableSchema["~standard"].validate).toHaveBeenCalledWith(["  ada  "]);
+    expect(handler).toHaveBeenCalledWith(event, "ada");
+
+    // Invalid input is rejected rather than silently passed through.
+    await expect(call?.(event, 42)).rejects.toBeInstanceOf(IpcValidationError);
+    expect(handler).toHaveBeenCalledTimes(1);
+
+    // The callable side was never used as a validator.
+    expect(callableSchema).not.toHaveBeenCalled();
+  });
+
   it("rejects a handler with IpcValidationError when a schema reports issues", async () => {
     const { handlers, ipc } = createIpc();
     const handler = vi.fn();

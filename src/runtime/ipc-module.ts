@@ -109,6 +109,9 @@ export class IpcValidationError extends Error {
  * parsing and coercion carry through. `TArgs` is the callback's declared
  * parameter tuple, which makes a schema that no longer matches its handler a
  * compile error rather than a runtime surprise.
+ *
+ * A value carrying `~standard` is always treated as a schema, even when it is
+ * also callable, so a callable schema is never mistaken for a callback.
  */
 export type IpcChannelValidator<TArgs extends readonly unknown[] = readonly unknown[]> =
   | ((
@@ -163,6 +166,11 @@ export interface DefineIpcModuleOptions<
  *
  * A callback validator only vets `args`, so they pass through untouched; a
  * schema returns its parsed value, which may be coerced or narrowed.
+ *
+ * The `~standard` marker is checked before `typeof`, because a schema may
+ * itself be callable — ArkType's are. Testing for a function first would run
+ * such a schema as a plain callback and discard the result it returned,
+ * silently admitting the payload it had just rejected.
  */
 async function runValidator(
   validator: IpcChannelValidator<readonly unknown[]>,
@@ -170,14 +178,14 @@ async function runValidator(
   event: IpcMainEvent | IpcMainInvokeEvent,
   context: IpcChannelContext,
 ): Promise<unknown[]> {
-  if (typeof validator === "function") {
-    await validator(args, event, context);
-    return args;
+  if ("~standard" in validator) {
+    const result = await validator["~standard"].validate(args);
+    if (result.issues) throw new IpcValidationError(context.channel, result.issues);
+    return [...result.value];
   }
 
-  const result = await validator["~standard"].validate(args);
-  if (result.issues) throw new IpcValidationError(context.channel, result.issues);
-  return [...result.value];
+  await validator(args, event, context);
+  return args;
 }
 
 function isThenable(value: unknown): value is PromiseLike<unknown> {
