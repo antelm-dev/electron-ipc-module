@@ -10,7 +10,7 @@ import {
   runIpcBridgeGeneration,
   type IpcBridgeOptions,
 } from "./bridge/ipc-bridge.js";
-import { globWatchRoot, hasGlobMagic, toAbsolutePosix } from "./shared/utils.js";
+import { createLogger, globWatchRoot, hasGlobMagic, toAbsolutePosix } from "./shared/utils.js";
 
 const HELP = `electron-ipc-module <generate|check> [options]
 
@@ -24,6 +24,7 @@ Options:
   --out-file <path> Generated TypeScript file
   --tsconfig <path> TypeScript configuration
   --watch           Keep watching after generation
+  --quiet           Suppress progress output; warnings and errors still print
   --help            Show this help
 `;
 
@@ -44,6 +45,7 @@ function parseArguments(args: string[]) {
     else if (flag === "--out-file") options.outFile = takeValue(args, index++, flag);
     else if (flag === "--tsconfig") options.tsconfig = takeValue(args, index++, flag);
     else if (flag === "--watch") watchMode = true;
+    else if (flag === "--quiet") options.logger = createLogger("ipc-bridge", true);
     else if (flag === "--help" || flag === "-h") return { command: "help", options, watchMode };
     else throw new Error(`Unknown option ${flag}`);
   }

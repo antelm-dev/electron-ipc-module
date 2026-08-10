@@ -79,6 +79,18 @@ describe("runCli", () => {
     expect(info.mock.calls[0][0]).toContain("electron-ipc-module <generate|check>");
   });
 
+  it("--quiet suppresses progress output but keeps warnings", () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    runCli([...baseArgs("generate"), "--quiet"]);
+
+    expect(existsSync(outFile)).toBe(true);
+    expect(info).not.toHaveBeenCalled();
+    // The fixture set includes a spread channel, so a warning is always due.
+    expect(warn).toHaveBeenCalled();
+  });
+
   it("rejects malformed invocations", () => {
     expect(() => runCli(["publish"])).toThrow("Unknown command publish");
     expect(() => runCli(["generate", "--nope"])).toThrow("Unknown option --nope");

@@ -383,11 +383,14 @@ The Rollup and Vite paths export the plugin default plus `IpcBridgeOptions`. The
 
 Analyzes `*.ipc.ts` files and generates a typed bridge for the renderer.
 
-| Option     | Default                         | Description                                |
-| ---------- | ------------------------------- | ------------------------------------------ |
-| `ipcDir`   | `./src/ipc`                     | Directory or glob of IPC module files      |
-| `outFile`  | `./src/generated/ipc-bridge.ts` | Generated TypeScript output                |
-| `tsconfig` | `./tsconfig.json`               | TypeScript config used for static analysis |
+| Option     | Default                         | Description                                   |
+| ---------- | ------------------------------- | --------------------------------------------- |
+| `ipcDir`   | `./src/ipc`                     | Directory or glob of IPC module files         |
+| `outFile`  | `./src/generated/ipc-bridge.ts` | Generated TypeScript output                   |
+| `tsconfig` | `./tsconfig.json`               | TypeScript config used for static analysis    |
+| `logger`   | labelled console logger         | Where progress and analyzer warnings are sent |
+
+`logger` takes any `LoggerLike` — `Pick<Console, "debug" \| "info" \| "warn" \| "error" \| "log">`, exported from the root. Supply one to route generator output into a build tool's own reporter, to silence it in a watch loop, or to see the per-module `debug` detail the default logger drops. The default prints `info` and above; a supplied logger receives every level.
 
 **Naming conventions**
 
@@ -417,10 +420,11 @@ npx electron-ipc-module generate \
   --tsconfig ./tsconfig.preload.json
 
 npx electron-ipc-module generate --watch
+npx electron-ipc-module generate --quiet
 npx electron-ipc-module check
 ```
 
-`check` does not write files and exits non-zero when the generated bridge is stale. The programmatic generator is exported from `electron-ipc-module/generator`.
+`check` does not write files and exits non-zero when the generated bridge is stale. `--quiet` drops progress output while still printing analyzer warnings and errors — a warning means the generated bridge is incompletely typed, which is not the kind of thing a quiet flag should hide. The programmatic generator is exported from `electron-ipc-module/generator`.
 
 **Commit the generated bridge.** It is the renderer's entire API surface, so keeping it in version control makes every change to it show up in review — a new channel reaching the renderer is exactly the diff a reviewer should see, and it is invisible if the file is produced during the build. It also means a fresh clone type-checks before anyone runs the generator.
 

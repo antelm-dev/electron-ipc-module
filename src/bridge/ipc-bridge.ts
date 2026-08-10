@@ -18,14 +18,13 @@ import {
 
 export type { IpcBridgeOptions } from "../shared/types/bridge.js";
 
-const logger = createLogger("ipc-bridge");
-
 /** Apply defaults and normalize paths for the bridge options. */
 export function resolveIpcBridgeOptions(options: IpcBridgeOptions = {}): ResolvedIpcBridgeOptions {
   return {
     ipcDir: options.ipcDir ?? DEFAULT_IPC_DIR,
     outFile: toAbsolutePosix(options.outFile ?? DEFAULT_OUT_FILE),
     tsconfig: toAbsolutePosix(options.tsconfig ?? DEFAULT_TSCONFIG),
+    logger: options.logger ?? createLogger("ipc-bridge"),
   };
 }
 
@@ -80,6 +79,7 @@ export function runIpcBridgeGeneration(
   generationOptions: { write?: boolean } = {},
 ) {
   const resolved = resolveIpcBridgeOptions(options);
+  const { logger } = resolved;
 
   logger.info("Analyzing IPC modules...");
   const program = createTsProgram(resolved.tsconfig);

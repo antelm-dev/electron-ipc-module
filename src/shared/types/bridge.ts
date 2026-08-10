@@ -1,3 +1,5 @@
+import type { LoggerLike } from "./runtime.js";
+
 /** User-facing options for the Rollup bridge plugin. */
 export interface IpcBridgeOptions {
   /** Directory or glob of `*.ipc.ts` files. Defaults to `./src/ipc`. */
@@ -6,6 +8,15 @@ export interface IpcBridgeOptions {
   outFile?: string;
   /** tsconfig used to type-check the analyzed files. Defaults to `./tsconfig.json`. */
   tsconfig?: string;
+  /**
+   * Where generation progress and analyzer warnings go. Defaults to a labelled
+   * console logger that prints `info` and above.
+   *
+   * Supply one to silence the generator in a watch loop, to route output into a
+   * build tool's own reporter, or to see the per-module `debug` detail the
+   * default logger drops.
+   */
+  logger?: LoggerLike;
 }
 
 /** {@link IpcBridgeOptions} with defaults applied and paths normalized. */
@@ -13,6 +24,7 @@ export interface ResolvedIpcBridgeOptions {
   ipcDir: string;
   outFile: string;
   tsconfig: string;
+  logger: LoggerLike;
 }
 
 /** A single analyzed channel of an IPC module. */

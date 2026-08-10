@@ -1,5 +1,7 @@
 import { resolve } from "node:path";
 
+import type { LoggerLike } from "./types/runtime.js";
+
 export type { MethodsOnly, MaybePromise, LoggerLike, Serializable } from "./types/runtime.js";
 
 /** Default directory scanned for `*.ipc.ts` module files. */
@@ -10,36 +12,47 @@ export const DEFAULT_OUT_FILE = "./src/generated/ipc-bridge.ts";
 export const DEFAULT_TSCONFIG = "./tsconfig.json";
 
 const COLORS = {
-  info: 32,
-  error: 31,
-  warn: 33,
   debug: 34,
+  error: 31,
+  info: 32,
+  log: 32,
+  warn: 33,
 } as const;
 
-const LEVELS = ["error", "warn", "info", "debug"] as const;
-type LogLevel = (typeof LEVELS)[number];
+const noop = () => void 0;
 
 /**
- * Create a labelled console logger. Levels at or above `level` are emitted;
- * quieter levels become no-ops.
+ * Create a labelled console logger for generator output.
+ *
+ * `debug` is always dropped: it is per-module detail that would bury the two
+ * lines worth reading on every rebuild. `quiet` additionally drops `info`,
+ * keeping `warn` and `error` — a warning means the generated bridge is
+ * incompletely typed, which is never noise.
+ *
+ * Pass `IpcBridgeOptions.logger` instead to receive every level, including
+ * `debug`, or to route output somewhere other than the console.
  */
-export function createLogger(label: string, level = "info") {
-  const index = LEVELS.indexOf(level as LogLevel);
-  return Object.fromEntries(
-    LEVELS.map((level) => {
-      const method = (...args: unknown[]) => {
-        const timestamp = new Date().toLocaleTimeString("en-US", {
-          hour: "2-digit",
-          minute: "2-digit",
-          second: "2-digit",
-          hour12: false,
-          hourCycle: "h23",
-        });
-        console[level](`\x1b[${COLORS[level]}m${timestamp} [${label}]\x1b[0m`, ...args);
-      };
-      return [level, index >= LEVELS.indexOf(level) ? method : () => void 0];
-    }) as [LogLevel, (...args: unknown[]) => void][],
-  );
+export function createLogger(label: string, quiet = false): LoggerLike {
+  const write =
+    (level: keyof typeof COLORS) =>
+    (...args: unknown[]) => {
+      const timestamp = new Date().toLocaleTimeString("en-US", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
+        hourCycle: "h23",
+      });
+      console[level](`\x1b[${COLORS[level]}m${timestamp} [${label}]\x1b[0m`, ...args);
+    };
+
+  return {
+    debug: noop,
+    error: write("error"),
+    info: quiet ? noop : write("info"),
+    log: quiet ? noop : write("log"),
+    warn: write("warn"),
+  };
 }
 
 /** Convert `kebab-case`, `snake_case`, or spaced text to `camelCase`. */
