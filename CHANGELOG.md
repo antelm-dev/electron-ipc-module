@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.0](https://github.com/antelm-dev/electron-ipc-module/compare/v1.0.0-rc.1...v1.0.0) (2026-08-10)
+
+
+### Features
+
+* **docs:** finalize 1.0 upgrade guidance ([#47](https://github.com/antelm-dev/electron-ipc-module/issues/47)) ([a9bfb3b](https://github.com/antelm-dev/electron-ipc-module/commit/a9bfb3bfb89e437bd72268a07acf654f7491f5a2))
+
 ## [1.0.0-rc.1](https://github.com/antelm-dev/electron-ipc-module/compare/v0.6.2...v1.0.0-rc.1) (2026-08-10)
 
 
