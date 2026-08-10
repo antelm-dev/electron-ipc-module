@@ -61,3 +61,14 @@ jobs:
           else
             npm publish --access public
           fi
+      - name: Keep `next` from lagging behind `latest`
+        # Publishing a stable release does not touch `next`, so it kept
+        # pointing at 1.0.0-rc.1 after 1.0.0 shipped and `npm install …@next`
+        # installed something older than `latest`. A stable release supersedes
+        # the prereleases that led to it, so move the tag with it.
+        #
+        # Deliberately not `continue-on-error`: the package is already
+        # published by this point, and a stranded tag is exactly what needs to
+        # be noticed. The manual remedy is this same command.
+        if: ${{ !contains(needs.release-please.outputs.tag, '-') }}
+        run: npm dist-tag add "electron-ipc-module@${RELEASE_TAG#v}" next
