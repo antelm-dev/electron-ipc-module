@@ -46,7 +46,7 @@ npm install electron-ipc-module
 ## Compatibility contract
 
 - **Modules:** ESM only. Use `import`; CommonJS `require()` is not a supported entry point. This applies to the package itself — your preload output is a separate question, covered in [preload constraints](#preload-constraints).
-- **Node.js:** Node 20 and every even/odd release from Node 22 onward (`20 || >=22`). CI covers Node 20 and 22.
+- **Node.js:** `^20.17.0 || >=22.5.0`. The floor is not the start of a major line because the generator uses `path.matchesGlob`, added in 20.17.0 and 22.5.0; below it, a glob `ipcDir` throws. CI runs the packed-artifact job at 20.17.0 exactly — driving the built package with plain Node, including the glob path that reaches `matchesGlob` — so the floor is tested rather than merely claimed. The unit matrix stays on the latest 20 and 22, because the dev toolchain (vitest 4, vite 8) has a higher floor of its own than the package does.
 - **Electron:** two different claims, deliberately kept apart.
   - The peer range is `>=12`, an **API-compatibility** claim: nothing here uses an Electron API newer than 12. It is a permissive install-time constraint because npm enforces it, and refusing to install on a version that works helps nobody.
   - **Build/type-checked** support is narrower. CI installs the latest patch of Electron's three currently supported stable majors — 41, 42, and 43 when this contract was frozen — and runs the type check, the public-API check, and the unit suite against each, advancing with [Electron's latest-three-stable support policy](https://www.electronjs.org/docs/latest/tutorial/electron-timelines). Between 12 and 41 the package should work and is not checked; bug reports from that range are welcome and will be treated as real.
@@ -400,6 +400,7 @@ Analyzes `*.ipc.ts` files and generates a typed bridge for the renderer.
 **Static analysis tips**
 
 - Use `*.ipc.ts` file names
+- **One `defineIpcModule` per file.** The bridge is grouped into one entry named after the file, so a second module in the same file has nowhere to go. Generation fails rather than emitting the first and dropping the rest, which would register both on `ipcMain` while the renderer only ever saw one.
 - Prefer a plain object literal in `defineIpcModule(...)`
 - Avoid spreads in the channels object for complete bridge typing
 - Use a string literal for the module prefix so build-time and runtime channel names cannot diverge

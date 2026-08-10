@@ -38,6 +38,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Latest of each line. This job cannot run at the `engines` floor:
+        # vitest 4 and vite 8 need Node >=20.19 themselves. `packed-consumer`
+        # covers the floor against the published artifact instead.
         node: [20, 22]
         electron: [41, 42, 43]
     runs-on: ubuntu-latest
@@ -58,13 +61,17 @@ jobs:
     # Installs the packed tarball into an empty project so the published
     # dependency set is exercised instead of this repository's devDependencies.
     # Catches entry points that import a package we never declared.
+    #
+    # Runs at the exact `engines` floor. This is the only job that can: it
+    # drives the built artifact with plain Node instead of the dev toolchain,
+    # whose own floor (vitest 4, vite 8) is higher than the package's.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6.0.9
       - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 20.17.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
@@ -98,6 +105,15 @@ jobs:
           }
           if (typeof rollupPlugin.default !== "function") {
             throw new Error("rollup-plugin entry point is missing its default export");
+          }
+          // Runs the glob path, which reaches path.matchesGlob — the API that
+          // sets the `engines` floor. Importing the module would not touch it.
+          const options = { ipcDir: "./main/**/*.ipc.ts" };
+          if (!generator.isIpcBridgeRelevantFile("./main/nested/profile.ipc.ts", options)) {
+            throw new Error("a matching *.ipc.ts file was not recognised under a glob ipcDir");
+          }
+          if (generator.isIpcBridgeRelevantFile("./other/profile.ipc.ts", options)) {
+            throw new Error("a file outside the glob ipcDir was treated as relevant");
           }
           EOF
           node probe.mjs
