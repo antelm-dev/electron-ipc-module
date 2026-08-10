@@ -50,6 +50,7 @@
     "prepare": "tsc --build",
     "typecheck": "tsc -p tsconfig.vitest.json --noEmit",
     "test:api": "pnpm run build && tsc -p tsconfig.public-api.json --noEmit",
+    "docs": "typedoc",
     "lint": "oxlint .",
     "lint:fix": "oxlint --fix .",
     "lint:commits": "commitlint --from HEAD~1 --to HEAD",
@@ -75,6 +76,7 @@
     "oxlint": "^1.72.0",
     "publint": "0.3.23",
     "rollup": "^4.17.2",
+    "typedoc": "^0.28.20",
     "typescript": "^6.0.3",
     "vite": "^8.2.0",
     "vitest": "^4.1.9"
