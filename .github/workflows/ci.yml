@@ -54,6 +54,20 @@ jobs:
       - run: pnpm run test:api
       - run: pnpm run test
 
+  coverage:
+    # One run, not one per matrix entry: coverage measures this repository's
+    # tests, which do not change with the Node or Electron version under test.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6.0.9
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run test:coverage
+
   packed-consumer:
     # Installs the packed tarball into an empty project so the published
     # dependency set is exercised instead of this repository's devDependencies.
