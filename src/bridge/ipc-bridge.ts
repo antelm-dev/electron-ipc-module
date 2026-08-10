@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, matchesGlob } from "node:path";
 
-import { extractModules } from "./ipc-bridge-analyzer.js";
+import { collectIpcFilePaths, extractModules } from "./ipc-bridge-analyzer.js";
 import { generateBridge } from "./ipc-bridge-generator.js";
 import { createTsProgram, makeRelativeImports } from "../shared/ts-utils.js";
 import type { IpcBridgeOptions, ResolvedIpcBridgeOptions } from "../shared/types/bridge.js";
@@ -93,7 +93,10 @@ export function runIpcBridgeGeneration(
   const { logger } = resolved;
 
   logger.info("Analyzing IPC modules...");
-  const program = createTsProgram(resolved.tsconfig);
+  // Diagnostics are scoped to the IPC sources and what they import: an error
+  // elsewhere in the project cannot reach the bridge, and aborting on it would
+  // make every unrelated compile error a generation failure.
+  const program = createTsProgram(resolved.tsconfig, collectIpcFilePaths(resolved.ipcDir));
   const modules = extractModules(program, resolved.ipcDir);
 
   for (const ipcModule of modules) {

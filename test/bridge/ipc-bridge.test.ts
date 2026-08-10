@@ -19,6 +19,9 @@ import {
 } from "../../src/shared/utils.js";
 
 const FIXTURES_DIR = fileURLToPath(new URL("../fixtures/bridge", import.meta.url));
+const SCOPED_FIXTURES_DIR = fileURLToPath(
+  new URL("../fixtures/scoped-diagnostics", import.meta.url),
+);
 const FIXTURE_IPC_DIR = join(FIXTURES_DIR, "ipc");
 const FIXTURE_TSCONFIG = join(FIXTURES_DIR, "tsconfig.json");
 const DEMO_IPC_FILE = join(FIXTURE_IPC_DIR, "demo.ipc.ts");
@@ -219,6 +222,40 @@ describe("runIpcBridgeGeneration", () => {
     expect(logger.debug).toHaveBeenCalled();
     // Nothing leaks to the console once a logger is supplied.
     expect(consoleInfo).not.toHaveBeenCalled();
+  });
+
+  describe("compiler diagnostics are scoped to the IPC sources", () => {
+    const scopedFixture = (name: string) => ({
+      ipcDir: join(SCOPED_FIXTURES_DIR, name, "ipc"),
+      tsconfig: join(SCOPED_FIXTURES_DIR, name, "tsconfig.json"),
+      outFile,
+    });
+
+    it("generates despite a type error in a file nothing imports", () => {
+      const result = runIpcBridgeGeneration(scopedFixture("clean"));
+
+      // `unrelated.ts` in that fixture does not compile. It cannot reach the
+      // bridge, so it must not be able to stop it being written.
+      expect(result.modules.map((module) => module.name)).toEqual(["demo"]);
+      expect(readFileSync(outFile, "utf-8")).toContain('ipcRenderer.invoke("demo:get")');
+    });
+
+    it("still aborts on a type error inside an IPC source", () => {
+      expect(() => runIpcBridgeGeneration(scopedFixture("broken-source"))).toThrow(
+        /TypeScript failed[\s\S]*brokenInSource|TypeScript failed[\s\S]*demo\.ipc\.ts/,
+      );
+      expect(existsSync(outFile)).toBe(false);
+    });
+
+    it("still aborts on a type error in a file an IPC source imports", () => {
+      // The scope has to follow imports: a broken dependency can make the
+      // analyzer serialize a wrong type into the bridge, which is exactly the
+      // failure the abort exists to prevent.
+      expect(() => runIpcBridgeGeneration(scopedFixture("broken-import"))).toThrow(
+        /TypeScript failed[\s\S]*payload\.ts/,
+      );
+      expect(existsSync(outFile)).toBe(false);
+    });
   });
 
   it("collects emitted events from createIpcHelpers", () => {

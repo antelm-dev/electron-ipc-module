@@ -4,6 +4,7 @@ import { dirname, relative, resolve } from "node:path";
 import ts from "typescript";
 
 import type { EmittedEventInfo } from "./types/bridge.js";
+import { toPosixPath } from "./utils.js";
 
 /** Type-to-string flags: never truncate, and keep fully-qualified names. */
 export const SERIALIZE_FLAGS =
@@ -29,8 +30,71 @@ function assertNoDiagnostics(diagnostics: readonly ts.Diagnostic[]) {
   );
 }
 
-/** Build a TypeScript program from a tsconfig path, resolving its file list. */
-export function createTsProgram(tsconfigPath: string) {
+/** Module specifier of an `import`/`export … from "…"`, when it has one. */
+function getModuleSpecifier(statement: ts.Statement): ts.Expression | undefined {
+  if (!ts.isImportDeclaration(statement) && !ts.isExportDeclaration(statement)) return undefined;
+  const specifier = statement.moduleSpecifier;
+  return specifier && ts.isStringLiteralLike(specifier) ? specifier : undefined;
+}
+
+/**
+ * The source files whose types can reach the generated bridge: the IPC entry
+ * files and everything they import, transitively.
+ *
+ * Resolution goes through the checker rather than a hand-rolled module
+ * resolver, so path mapping, conditional exports, and `.js` specifiers pointing
+ * at `.ts` sources are followed exactly as the compiler follows them.
+ */
+function collectReachableFiles(
+  program: ts.Program,
+  entryPaths: readonly string[],
+): ts.SourceFile[] {
+  const byPath = new Map<string, ts.SourceFile>();
+  for (const file of program.getSourceFiles()) {
+    byPath.set(toPosixPath(resolve(file.fileName)), file);
+  }
+
+  const checker = program.getTypeChecker();
+  const reached = new Set<ts.SourceFile>();
+  const pending: ts.SourceFile[] = [];
+
+  for (const entry of entryPaths) {
+    const file = byPath.get(toPosixPath(resolve(entry)));
+    if (file && !reached.has(file)) {
+      reached.add(file);
+      pending.push(file);
+    }
+  }
+
+  while (pending.length > 0) {
+    const file = pending.pop() as ts.SourceFile;
+    for (const statement of file.statements) {
+      const specifier = getModuleSpecifier(statement);
+      if (!specifier) continue;
+      for (const declaration of checker.getSymbolAtLocation(specifier)?.getDeclarations() ?? []) {
+        const imported = declaration.getSourceFile();
+        if (!reached.has(imported)) {
+          reached.add(imported);
+          pending.push(imported);
+        }
+      }
+    }
+  }
+
+  return [...reached];
+}
+
+/**
+ * Build a TypeScript program from a tsconfig path, resolving its file list.
+ *
+ * `scopeTo` limits per-file diagnostics to those entry files and their
+ * transitive imports. An error anywhere else cannot reach the generated bridge,
+ * so failing on it would turn every unrelated compile error in the project —
+ * including the half-written file you are in the middle of — into a generation
+ * failure. Whole-program diagnostics (config, options, globals) are always
+ * checked; omit `scopeTo` to check every file, as before.
+ */
+export function createTsProgram(tsconfigPath: string, scopeTo?: readonly string[]) {
   const abs = resolve(tsconfigPath).replace(/\\/g, "/");
   const configFile = ts.readConfigFile(abs, (filePath) => readFileSync(filePath, "utf-8"));
   if (configFile.error) {
@@ -48,14 +112,19 @@ export function createTsProgram(tsconfigPath: string) {
     configFileParsingDiagnostics: parsed.errors,
   });
 
+  const scoped = scopeTo && collectReachableFiles(program, scopeTo);
+  const fileDiagnostics = scoped
+    ? scoped.flatMap((file) => [
+        ...program.getSyntacticDiagnostics(file),
+        ...program.getSemanticDiagnostics(file),
+      ])
+    : [...program.getSyntacticDiagnostics(), ...program.getSemanticDiagnostics()];
+
   assertNoDiagnostics([
     ...program.getConfigFileParsingDiagnostics(),
     ...program.getOptionsDiagnostics(),
-    ...program.getSyntacticDiagnostics(),
     ...program.getGlobalDiagnostics(),
-    ...program
-      .getSemanticDiagnostics()
-      .filter((diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error),
+    ...fileDiagnostics,
   ]);
 
   return program;
