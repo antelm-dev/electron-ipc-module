@@ -103,8 +103,11 @@ jobs:
           node probe.mjs
 
   example:
-    # Builds example/ end to end: generation, compilation, and the sandboxed
-    # CommonJS preload bundle. Electron is never launched, only built against.
+    # Builds example/ end to end — generation, compilation, and the sandboxed
+    # CommonJS preload bundle — then launches it. This is the only job that runs
+    # a real Electron process, and so the only one that can show the generator
+    # and the runtime agreeing on channel names; everywhere else Electron is
+    # mocked, which cannot catch the two halves drifting apart.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -116,8 +119,20 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
       - run: pnpm install --dir example --no-frozen-lockfile
+        env:
+          # Overrides the workflow-wide skip: this job needs the real binary.
+          ELECTRON_SKIP_BINARY_DOWNLOAD: ""
       - run: pnpm run --dir example build
       - name: Verify the preload bundle is CommonJS
         run: node -e "const s=require('node:fs').readFileSync('example/dist/preload.cjs','utf8'); if (/^\s*import\s/m.test(s)) { console.error('preload bundle contains ESM import statements'); process.exit(1); }"
       - name: Verify the committed bridge is current
         run: pnpm run --dir example generate && git diff --exit-code example/generated
+      - name: Allow the Chromium sandbox to start
+        # Ubuntu 24.04 blocks unprivileged user namespaces through AppArmor,
+        # which is what the sandbox needs. Relaxing that is preferred over
+        # --no-sandbox: the example runs with `sandbox: true` and the sandboxed
+        # preload is the configuration the README tells people to use, so it is
+        # the one worth exercising.
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Drive the generated bridge in a real renderer
+        run: xvfb-run -a pnpm run --dir example smoke

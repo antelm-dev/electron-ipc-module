@@ -9,5 +9,12 @@
     "outDir": "./dist",
     "rootDir": "."
   },
-  "include": ["main.ts", "preload.ts", "renderer.ts", "ipc/**/*.ts", "generated/**/*.ts"]
+  "include": [
+    "main.ts",
+    "preload.ts",
+    "renderer.ts",
+    "smoke.ts",
+    "ipc/**/*.ts",
+    "generated/**/*.ts"
+  ]
 }
