@@ -147,7 +147,7 @@ describe("runIpcBridgeGeneration", () => {
     expect(demo?.channels.map((channel) => channel.key)).toEqual(["ping", "notify", "get-user"]);
 
     const code = readFileSync(outFile, "utf-8");
-    expect(code).toContain("import { ipcRenderer, type IpcRendererEvent } from 'electron';");
+    expect(code).toContain("import { ipcRenderer } from 'electron';");
     expect(code).toContain("createOnHelper");
     expect(code).toContain('ipcRenderer.invoke("demo:ping")');
     expect(code).toContain('ipcRenderer.send("demo:notify")');

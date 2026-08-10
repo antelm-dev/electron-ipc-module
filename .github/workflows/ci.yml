@@ -92,6 +92,10 @@ jobs:
         # npm, not pnpm: pnpm pack has no --ignore-scripts, and prepack would
         # re-run the full check suite the other jobs already cover.
         run: npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP"
+      - name: Validate package metadata and type resolution
+        run: |
+          pnpm exec publint "$RUNNER_TEMP"/electron-ipc-module-*.tgz --strict
+          pnpm exec attw "$RUNNER_TEMP"/electron-ipc-module-*.tgz --profile esm-only
       - name: Install it into an empty project
         working-directory: ${{ runner.temp }}
         # npm installs peer dependencies by default, so a missing declaration
@@ -135,6 +139,54 @@ jobs:
           }
           EOF
           node probe.mjs
+
+  compatibility:
+    # Exercise the installed artifact at every TypeScript contract boundary,
+    # rather than compiling this repository with a compiler its devDependencies
+    # may not support. The Electron 12 case proves the permissive peer floor can
+    # still consume the declarations and run the generator under modern Node.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - typescript: 5.0.4
+            electron: 12.2.3
+            rollup: 4.17.2
+          - typescript: 5.9.3
+            electron: 43.3.0
+            rollup: 4.62.4
+          - typescript: 6.0.3
+            electron: 43.3.0
+            rollup: 4.62.4
+    name: compatibility (TypeScript ${{ matrix.typescript }}, Electron ${{ matrix.electron }})
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6.0.9
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.5.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build
+      - name: Pack the publishable artifact
+        run: npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP"
+      - name: Create an isolated consumer
+        working-directory: ${{ runner.temp }}
+        run: |
+          mkdir compatibility-consumer
+          cp -R "$GITHUB_WORKSPACE/test/fixtures/consumer/." compatibility-consumer/
+          cp "$GITHUB_WORKSPACE/test/public-api/exports.ts" compatibility-consumer/public-api.ts
+          cd compatibility-consumer
+          npm init -y >/dev/null
+          npm pkg set type=module
+          npm install "$RUNNER_TEMP"/electron-ipc-module-*.tgz electron@${{ matrix.electron }} rollup@${{ matrix.rollup }} typescript@${{ matrix.typescript }} --ignore-scripts
+      - name: Generate and type-check a consumer bridge
+        working-directory: ${{ runner.temp }}/compatibility-consumer
+        run: |
+          npx electron-ipc-module generate --ipc-dir ./ipc --out-file ./generated/ipc-bridge.ts --tsconfig ./tsconfig.json
+          npx tsc -p tsconfig.json --noEmit
+          npx tsc -p tsconfig.public-api.json
 
   example:
     # Builds example/ end to end — generation, compilation, and the sandboxed

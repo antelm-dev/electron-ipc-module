@@ -65,6 +65,7 @@
     "@standard-schema/spec": "^1.1.0"
   },
   "devDependencies": {
+    "@arethetypeswrong/cli": "0.18.5",
     "@commitlint/cli": "^21.2.1",
     "@commitlint/config-conventional": "^21.2.0",
     "@types/node": "^26.1.2",
@@ -72,6 +73,7 @@
     "electron": "^43.2.0",
     "oxfmt": "^0.62.0",
     "oxlint": "^1.72.0",
+    "publint": "0.3.23",
     "rollup": "^4.17.2",
     "typescript": "^6.0.3",
     "vite": "^8.2.0",
