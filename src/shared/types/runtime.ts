@@ -32,6 +32,81 @@ type StructuredCloneNative =
   | undefined;
 
 /**
+ * Values structured clone always rejects with `DataCloneError`.
+ *
+ * Rejection is for the whole payload, not the offending member: one function
+ * anywhere inside an object means nothing arrives.
+ */
+type Uncloneable =
+  | ((...args: any[]) => any)
+  | symbol
+  | Promise<unknown>
+  | WeakMap<object, unknown>
+  | WeakSet<object>;
+
+/**
+ * Whether every part of `T` survives structured clone.
+ *
+ * Folds a union to `true` only when all its members pass, so an optional or
+ * union-typed member that *could* hold an uncloneable value fails the whole
+ * check — matching a runtime that rejects the payload rather than trimming it.
+ */
+type IsCloneable<T> = [T] extends [never] ? true : [CloneCheck<T>] extends [true] ? true : false;
+
+/** Distributes over unions, so a mixed union yields `boolean` and fails the fold. */
+type CloneCheck<T> =
+  IsAny<T> extends true
+    ? true
+    : T extends Uncloneable
+      ? false
+      : T extends StructuredCloneNative
+        ? true
+        : T extends Map<infer TKey, infer TValue>
+          ? IsCloneable<TKey> extends true
+            ? IsCloneable<TValue>
+            : false
+          : T extends Set<infer TItem>
+            ? IsCloneable<TItem>
+            : T extends readonly unknown[]
+              ? IsCloneable<T[number]>
+              : T extends object
+                ? // Indexing by `keyof T` unions every member, including inherited
+                  // methods, which is what makes a class instance fail.
+                  IsCloneable<T[keyof T]>
+                : true;
+
+/**
+ * Returned by {@link Serializable} in place of a payload that cannot cross IPC.
+ *
+ * It is deliberately not assignable to anything useful: a channel declared with
+ * one is rejected by `defineIpcModule`, and a renderer cannot read it.
+ */
+export interface IpcUncloneable<TPayload> {
+  readonly __ipcUncloneable: "This payload cannot cross the Electron IPC boundary: structured clone rejects the whole value";
+  readonly payload: TPayload;
+}
+
+/** Rewrite `T` into the value the renderer actually receives. Assumes `T` clones. */
+type Cloned<T> =
+  // Electron converts Buffer to Uint8Array, so Buffer-only methods are absent.
+  T extends Buffer
+    ? Uint8Array
+    : // Subclass prototypes and custom fields do not survive; the base does.
+      T extends Error
+      ? Error
+      : T extends StructuredCloneNative
+        ? T
+        : T extends Map<infer TKey, infer TValue>
+          ? Map<Cloned<TKey>, Cloned<TValue>>
+          : T extends Set<infer TItem>
+            ? Set<Cloned<TItem>>
+            : // Homomorphic, so arrays and tuples keep their shape, labels, and
+              // `readonly`/optional modifiers instead of collapsing to objects.
+              T extends object
+              ? { [K in keyof T]: Cloned<T[K]> }
+              : T;
+
+/**
  * Model what survives the IPC boundary.
  *
  * Electron serializes IPC payloads with the structured clone algorithm, which
@@ -39,15 +114,21 @@ type StructuredCloneNative =
  * the value the main process returned; this type describes the value the
  * renderer actually receives:
  *
- * - **Methods and function-valued properties become `never`.** Structured clone
- *   throws `DataCloneError` on a function, so a payload containing one fails at
- *   runtime rather than arriving incomplete.
- * - **Class instances lose their prototype.** They arrive as plain objects
- *   carrying their own enumerable properties, so `instanceof` is false and
- *   every method is gone. The mapped type reproduces this by dropping the
- *   nominal class identity and mapping methods to `never`.
+ * - **An uncloneable member invalidates the whole payload.** Functions, symbols,
+ *   promises, `WeakMap`, and `WeakSet` make structured clone throw
+ *   `DataCloneError`, and nothing arrives — so the result is
+ *   {@link IpcUncloneable}, not a partially-mapped object. This propagates out
+ *   of arrays, tuples, `Map`, `Set`, and nested objects.
+ * - **Class instances are rejected when they carry methods**, because a type
+ *   cannot distinguish an own function property (which throws) from a prototype
+ *   method (which is silently dropped). Return a plain data object instead.
+ *   A class with only data properties survives as a plain object, so
+ *   `instanceof` is false in the renderer.
+ * - **`Buffer` arrives as `Uint8Array`.** Electron converts it, so
+ *   `readUInt32LE()` and friends are absent on the other side.
  * - **`Date`, `RegExp`, `Map`, `Set`, `Error`, `ArrayBuffer`, and typed arrays
- *   survive** and keep their prototypes.
+ *   survive** and keep their prototypes. Subclasses of them do not: a custom
+ *   `Error` arrives as a plain `Error`, without its added fields or methods.
  * - **Getters are flattened** to the value they evaluated to at send time.
  *
  * Applied automatically to the generated bridge's parameters and return types,
@@ -55,23 +136,7 @@ type StructuredCloneNative =
  * site instead of `undefined is not a function` in the renderer.
  */
 export type Serializable<T> =
-  IsAny<T> extends true
-    ? T
-    : T extends StructuredCloneNative
-      ? T
-      : T extends (...args: any[]) => any
-        ? never
-        : T extends symbol
-          ? never
-          : T extends Map<infer TKey, infer TValue>
-            ? Map<Serializable<TKey>, Serializable<TValue>>
-            : T extends Set<infer TItem>
-              ? Set<Serializable<TItem>>
-              : // Homomorphic, so arrays and tuples keep their shape, labels, and
-                // `readonly`/optional modifiers instead of collapsing to objects.
-                T extends object
-                ? { [K in keyof T]: Serializable<T[K]> }
-                : T;
+  IsAny<T> extends true ? T : IsCloneable<T> extends true ? Cloned<T> : IpcUncloneable<T>;
 
 /** Minimal console-like logging surface. */
 export type LoggerLike = Pick<Console, "debug" | "info" | "warn" | "error" | "log">;
@@ -143,18 +208,48 @@ export type IpcListener<
 /** The four channel flavors understood by {@link defineChannel}. */
 export type ChannelType = "handle" | "handleOnce" | "listen" | "listenOnce";
 
+/** A request/response channel definition, from `handle` / `handleOnce`. */
+export type HandlerDef<
+  TArgs extends any[] = any[],
+  TResult = any,
+  TEmit extends IpcEventMap = AnyIpcEventMap,
+> = {
+  kind: "handler";
+  fn: IpcHandler<TArgs, TResult, TEmit>;
+  once: boolean;
+};
+
+/** A fire-and-forget channel definition, from `listen` / `listenOnce`. */
+export type ListenerDef<
+  TArgs extends any[] = any[],
+  TResult = any,
+  TEmit extends IpcEventMap = AnyIpcEventMap,
+> = {
+  kind: "listener";
+  fn: IpcListener<TArgs, TResult, TEmit>;
+  once: boolean;
+};
+
 /** A single channel definition produced by `handle`/`listen`/etc. */
-export type ChannelDef =
-  | {
-      kind: "handler";
-      fn: IpcHandler<any[], any, any>;
-      once: boolean;
-    }
-  | {
-      kind: "listener";
-      fn: IpcListener<any[], any, any>;
-      once: boolean;
-    };
+export type ChannelDef = HandlerDef | ListenerDef;
+
+/**
+ * A channel definition, or an {@link IpcUncloneable} marker when its payload
+ * cannot cross IPC.
+ *
+ * The marker is not assignable to {@link ChannelDef}, so `defineIpcModule`
+ * rejects the channel where it is declared. Without this the mistake would only
+ * surface in the generated bridge, far from the handler that caused it.
+ *
+ * `TResult` is checked for `handle`/`handleOnce` only. A `listen` callback's
+ * return value is never sent back to the renderer, so it never gets cloned.
+ */
+export type CloneableChannel<TDef, TArgs, TResult> =
+  IsCloneable<TArgs> extends true
+    ? IsCloneable<TResult> extends true
+      ? TDef
+      : IpcUncloneable<TResult>
+    : IpcUncloneable<TArgs>;
 
 /** A channel name paired with the callback that unregisters it. */
 export type IpcCleanup = readonly [channel: string, cleanup: () => void];
