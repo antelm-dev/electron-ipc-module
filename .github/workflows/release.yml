@@ -41,6 +41,7 @@ jobs:
     environment: npm
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+      RELEASE_TAG: ${{ needs.release-please.outputs.tag }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -53,4 +54,10 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       # `prepack` already runs `check && build` on publish
-      - run: npm publish --access public
+      - name: Publish with the appropriate npm dist-tag
+        run: |
+          if [[ "$RELEASE_TAG" == *-* ]]; then
+            npm publish --access public --tag next
+          else
+            npm publish --access public
+          fi
