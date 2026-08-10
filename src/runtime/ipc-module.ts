@@ -1,3 +1,4 @@
+import type { StandardSchemaV1 } from "@standard-schema/spec";
 import { ipcMain, type IpcMain, type IpcMainEvent, type IpcMainInvokeEvent } from "electron";
 
 import type {
@@ -75,7 +76,61 @@ export class IpcAuthorizationError extends Error {
   }
 }
 
-export interface DefineIpcModuleOptions {
+/** Render one Standard Schema issue as `path: message`, or just its message. */
+function formatIssue(issue: StandardSchemaV1.Issue) {
+  const path = issue.path
+    ?.map((segment) => String(typeof segment === "object" ? segment.key : segment))
+    .join(".");
+  return path ? `${path}: ${issue.message}` : issue.message;
+}
+
+/** Thrown when a schema validator rejects a channel's payload. */
+export class IpcValidationError extends Error {
+  /** The issues reported by the schema, in the order it produced them. */
+  readonly issues: readonly StandardSchemaV1.Issue[];
+
+  constructor(channel: string, issues: readonly StandardSchemaV1.Issue[]) {
+    super(
+      `IPC payload failed validation for channel ${JSON.stringify(channel)}: ${issues
+        .map(formatIssue)
+        .join("; ")}`,
+    );
+    this.name = "IpcValidationError";
+    this.issues = issues;
+  }
+}
+
+/**
+ * A runtime guard for one channel's payload — either a callback that throws to
+ * reject, or any [Standard Schema](https://standardschema.dev) (Zod, Valibot,
+ * ArkType, …).
+ *
+ * A schema's output replaces the arguments handed to the channel callback, so
+ * parsing and coercion carry through. `TArgs` is the callback's declared
+ * parameter tuple, which makes a schema that no longer matches its handler a
+ * compile error rather than a runtime surprise.
+ *
+ * A value carrying `~standard` is always treated as a schema, even when it is
+ * also callable, so a callable schema is never mistaken for a callback.
+ */
+export type IpcChannelValidator<TArgs extends readonly unknown[] = readonly unknown[]> =
+  | ((
+      args: readonly unknown[],
+      event: IpcMainEvent | IpcMainInvokeEvent,
+      context: IpcChannelContext,
+    ) => MaybePromise<void>)
+  | StandardSchemaV1<readonly unknown[], TArgs>;
+
+/** The parameter tuple a channel definition's callback accepts, minus the event. */
+type ChannelArgs<TChannel> = TChannel extends {
+  fn: (event: never, ...args: infer TArgs) => unknown;
+}
+  ? TArgs
+  : readonly unknown[];
+
+export interface DefineIpcModuleOptions<
+  TChannels extends Record<string, ChannelDef> = Record<string, ChannelDef>,
+> {
   /**
    * Hook run after every channel is registered. May return a cleanup callback
    * that runs when the module is unloaded. If it throws, all channels
@@ -87,15 +142,15 @@ export interface DefineIpcModuleOptions {
     event: IpcMainEvent | IpcMainInvokeEvent,
     context: IpcChannelContext,
   ) => MaybePromise<boolean | void>;
-  /** Per-channel runtime payload validators. Throw to reject invalid input. */
-  validate?: Record<
-    string,
-    (
-      args: readonly unknown[],
-      event: IpcMainEvent | IpcMainInvokeEvent,
-      context: IpcChannelContext,
-    ) => MaybePromise<void>
-  >;
+  /**
+   * Per-channel runtime payload validators, keyed by channel key. A callback
+   * validator throws to reject; a Standard Schema validator rejects with
+   * {@link IpcValidationError} and its parsed output replaces the arguments.
+   *
+   * Keys are checked against the declared channels, so a misspelled entry is a
+   * compile error instead of a guard that silently never runs.
+   */
+  validate?: { [K in keyof TChannels]?: IpcChannelValidator<ChannelArgs<TChannels[K]>> };
   /**
    * Called when a fire-and-forget `listen` / `listenOnce` channel rejects.
    * Unlike `handle` channels, listener failures are not returned to the
@@ -104,6 +159,33 @@ export interface DefineIpcModuleOptions {
   onListenerError?: (error: unknown, context: IpcChannelContext, event: IpcMainEvent) => void;
   /** Prefix emitted renderer event channels with the module prefix or a custom prefix. */
   eventPrefix?: boolean | string;
+}
+
+/**
+ * Run one validator and return the arguments the callback should receive.
+ *
+ * A callback validator only vets `args`, so they pass through untouched; a
+ * schema returns its parsed value, which may be coerced or narrowed.
+ *
+ * The `~standard` marker is checked before `typeof`, because a schema may
+ * itself be callable — ArkType's are. Testing for a function first would run
+ * such a schema as a plain callback and discard the result it returned,
+ * silently admitting the payload it had just rejected.
+ */
+async function runValidator(
+  validator: IpcChannelValidator<readonly unknown[]>,
+  args: unknown[],
+  event: IpcMainEvent | IpcMainInvokeEvent,
+  context: IpcChannelContext,
+): Promise<unknown[]> {
+  if ("~standard" in validator) {
+    const result = await validator["~standard"].validate(args);
+    if (result.issues) throw new IpcValidationError(context.channel, result.issues);
+    return [...result.value];
+  }
+
+  await validator(args, event, context);
+  return args;
 }
 
 function isThenable(value: unknown): value is PromiseLike<unknown> {
@@ -201,10 +283,10 @@ function wrapEvent<T extends IpcMainEvent | IpcMainInvokeEvent>(
  * @param channels - Map of channel key to a definition from `handle`/`listen`/…
  * @param options - Optional {@link DefineIpcModuleOptions}.
  */
-export function defineIpcModule(
+export function defineIpcModule<TChannels extends Record<string, ChannelDef>>(
   prefix: string,
-  channels: Record<string, ChannelDef>,
-  options: DefineIpcModuleOptions = {},
+  channels: TChannels,
+  options: DefineIpcModuleOptions<TChannels> = {},
 ) {
   const { authorize, onListenerError, ready, validate } = options;
   const eventPrefix =
@@ -221,7 +303,7 @@ export function defineIpcModule(
       for (const [key, def] of Object.entries(channels)) {
         const channel = prefix ? `${prefix}:${key}` : key;
         const context = { channel, key, prefix } satisfies IpcChannelContext;
-        const validator = validate?.[key];
+        const validator = validate?.[key] as IpcChannelValidator<readonly unknown[]> | undefined;
         const callUserFunction = (event: IpcMainEvent | IpcMainInvokeEvent, args: unknown[]) =>
           def.fn(wrapEvent(event, eventPrefix) as never, ...args);
         const runGuarded = async (
@@ -231,8 +313,8 @@ export function defineIpcModule(
           if ((await authorize?.(event, context)) === false) {
             throw new IpcAuthorizationError(channel);
           }
-          await validator?.(args, event, context);
-          return callUserFunction(event, args);
+          const validated = validator ? await runValidator(validator, args, event, context) : args;
+          return callUserFunction(event, validated);
         };
 
         let fn: (...args: any[]) => any;

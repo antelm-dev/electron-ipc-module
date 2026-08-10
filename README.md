@@ -46,7 +46,7 @@ npm install electron-ipc-module
 ## Compatibility contract
 
 - **Modules:** ESM only. Use `import`; CommonJS `require()` is not a supported entry point. This applies to the package itself — your preload output is a separate question, covered in [preload constraints](#preload-constraints).
-- **Node.js:** `^20.17.0 || >=22.5.0`. The floor is not the start of a major line because the generator uses `path.matchesGlob`, added in 20.17.0 and 22.5.0; below it, a glob `ipcDir` throws. CI runs the packed-artifact job at 20.17.0 exactly — driving the built package with plain Node, including the glob path that reaches `matchesGlob` — so the floor is tested rather than merely claimed. The unit matrix stays on the latest 20 and 22, because the dev toolchain (vitest 4, vite 8) has a higher floor of its own than the package does.
+- **Node.js:** `>=22.5.0`. The floor is not the start of a major line because the generator resolves `ipcDir` with Node's own globbing rather than a dependency: `fs.globSync` arrived in 22.0.0 and `path.matchesGlob` in 22.5.0, and below that a glob `ipcDir` throws. CI runs the packed-artifact job at 22.5.0 exactly — driving the built package with plain Node, including the glob paths that reach both APIs — so the floor is tested rather than merely claimed. The unit matrix runs the latest 22 and 24.
 - **Electron:** two different claims, deliberately kept apart.
   - The peer range is `>=12`, an **API-compatibility** claim: nothing here uses an Electron API newer than 12. It is a permissive install-time constraint because npm enforces it, and refusing to install on a version that works helps nobody.
   - **Build/type-checked** support is narrower. CI installs the latest patch of Electron's three currently supported stable majors — 41, 42, and 43 when this contract was frozen — and runs the type check, the public-API check, and the unit suite against each, advancing with [Electron's latest-three-stable support policy](https://www.electronjs.org/docs/latest/tutorial/electron-timelines). Between 12 and 41 the package should work and is not checked; bug reports from that range are welcome and will be treated as real.
@@ -197,6 +197,7 @@ pnpm start
 | `handle`, `handleOnce`, `listen`, `listenOnce` | Default untyped helpers                         |
 | `createIpcContainer()`                         | Load, unload, and observe IPC modules           |
 | `IpcAuthorizationError`                        | Thrown when `authorize` returns `false`         |
+| `IpcValidationError`                           | Thrown when a schema `validate` entry rejects   |
 | `IpcChannelCollisionError`                     | Thrown on a duplicate physical channel name     |
 | `IpcContainerDisposedError`                    | Thrown by lifecycle calls after `dispose()`     |
 | `IpcObserverError`                             | Reported on `error` when an observer threw      |
@@ -223,14 +224,21 @@ defineIpcModule("profile", channels, {
 });
 ```
 
-**Authorization and runtime validation.** Types protect callers at compile time; these hooks protect the actual main-process boundary. Returning `false` from `authorize` rejects the call with `IpcAuthorizationError`. Validators should throw when a payload is invalid.
+**Authorization and runtime validation.** Types protect callers at compile time; these hooks protect the actual main-process boundary. Returning `false` from `authorize` rejects the call with `IpcAuthorizationError`.
+
+A `validate` entry is either a callback that throws to reject the payload, or any [Standard Schema](https://standardschema.dev) — Zod, Valibot, ArkType, and others implement it, and the package depends only on `@standard-schema/spec`, which is types with no runtime. A schema receives the full argument array and its **parsed output replaces the arguments** the channel callback receives, so coercion carries through instead of being validated and then discarded. Failures reject with `IpcValidationError`, which carries the schema's `issues`.
+
+`validate` keys are checked against the channels you declared, and a schema's output is checked against the channel callback's parameters — so a renamed channel or a schema that drifts from its handler is a compile error, not a guard that silently stops matching.
 
 ```ts
 defineIpcModule("profile", channels, {
   authorize: (event) => event.senderFrame?.url.startsWith("app://") === true,
   validate: {
-    save: (args) => {
-      profileInputSchema.parse(args[0]);
+    // A schema: `save` is called with the parsed tuple.
+    save: z.tuple([profileInputSchema]),
+    // Or a callback, when a check needs the event or the channel context.
+    rename: (args, event) => {
+      if (typeof args[0] !== "string") throw new TypeError("expected a name");
     },
   },
   // listen/listenOnce failures are not returned to the renderer — hook or log them
@@ -364,7 +372,7 @@ Open an issue if you have a case this pattern genuinely cannot cover.
 | Failure                | Behavior                                                                                                                                                                                                                                                                                                                                                                                                           |
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Authorization          | `authorize` returning `false` creates `IpcAuthorizationError`. A thrown/rejected authorization error is preserved. Handlers reject; listeners use listener-failure behavior below.                                                                                                                                                                                                                                 |
-| Validation             | The validator's thrown/rejected value is preserved. The channel callback is not called. Handlers reject; listeners use listener-failure behavior below.                                                                                                                                                                                                                                                            |
+| Validation             | A callback validator's thrown/rejected value is preserved; a schema reporting issues creates `IpcValidationError` carrying them. The channel callback is not called. Handlers reject; listeners use listener-failure behavior below.                                                                                                                                                                               |
 | Handler callback       | A thrown value or rejected promise is preserved and returned through Electron's `invoke` rejection path.                                                                                                                                                                                                                                                                                                           |
 | Listener callback      | Synchronous throws and promise rejections are caught. `onListenerError(error, context, event)` is called once, or the error is logged when no hook exists. If the hook itself throws, that secondary error is logged; it is never rethrown into Electron's event emitter.                                                                                                                                          |
 | Cleanup                | Every relevant channel cleanup and module cleanup is attempted. State is removed even on failure. One or more failures reject with `AggregateError`; rollback errors are aggregated with the original failure, original error first.                                                                                                                                                                               |
@@ -375,7 +383,7 @@ Open an issue if you have a case this pattern genuinely cannot cover.
 
 ### Intentional public exports
 
-The root export contains the runtime values shown above, `IpcAuthorizationError`, `IpcChannelCollisionError`, `IpcContainerDisposedError`, and `IpcObserverError`. Its exported types are the callback/event types (`IpcHandler`, `IpcListener`, typed Electron event/sender types), module/container registration types, option/context types, channel definition types, generator analysis/option types, and the general `MaybePromise`, `MethodsOnly`, `Serializable`, `IpcUncloneable`, and `LoggerLike` helpers. These lower-level types are public so wrappers and tooling can describe compatible registrations without importing internal files.
+The root export contains the runtime values shown above, `IpcAuthorizationError`, `IpcValidationError`, `IpcChannelCollisionError`, `IpcContainerDisposedError`, and `IpcObserverError`. Its exported types are the callback/event types (`IpcHandler`, `IpcListener`, typed Electron event/sender types), module/container registration types, option/context/validator types, channel definition types, generator analysis/option types, and the general `MaybePromise`, `MethodsOnly`, `Serializable`, `IpcUncloneable`, and `LoggerLike` helpers. These lower-level types are public so wrappers and tooling can describe compatible registrations without importing internal files.
 
 The Rollup and Vite paths export the plugin default plus `IpcBridgeOptions`. The generator path exports `resolveIpcBridgeOptions`, `getIpcBridgeWatchTargets`, `isIpcBridgeRelevantFile`, `runIpcBridgeGeneration`, and `IpcBridgeOptions`. Compile-time API tests import all of these through the built package export map; no public-contract test imports `src`.
 
