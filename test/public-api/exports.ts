@@ -16,6 +16,9 @@ import {
   type ChannelDef,
   type ChannelInfo,
   type ChannelType,
+  type CloneableChannel,
+  type HandlerDef,
+  type ListenerDef,
   type DefineIpcModuleOptions,
   type EmittedEventInfo,
   type IpcBridgeOptions,
@@ -33,6 +36,7 @@ import {
   type MaybePromise,
   type MethodsOnly,
   type ResolvedIpcBridgeOptions,
+  type IpcUncloneable,
   type Serializable,
   type TypedIpcMainEvent,
   type TypedIpcMainInvokeEvent,
@@ -112,6 +116,10 @@ type PublicTypes = [
   IpcEventMap,
   IpcHandler,
   IpcListener,
+  IpcUncloneable<string>,
+  HandlerDef,
+  ListenerDef,
+  CloneableChannel<ChannelDef, [id: string], string>,
   IpcModuleCleanup,
   IpcModuleRegister,
   IpcModuleRegistration,
@@ -138,31 +146,45 @@ declare class User {
   greet(): string;
 }
 
+declare class Account {
+  id: string;
+  createdAt: Date;
+}
+
 type SerializableAssertions = [
-  // Class instances arrive as plain data: the prototype is gone, so methods
-  // become `never` while own properties survive.
-  Expect<Equal<Serializable<User>, { id: string; createdAt: Date; greet: never }>>,
-  // Structured clone throws on functions rather than dropping them silently.
-  Expect<Equal<Serializable<() => void>, never>>,
-  Expect<Equal<Serializable<{ run: () => void }>, { run: never }>>,
+  // A method makes the whole payload uncloneable: structured clone rejects the
+  // value outright rather than delivering it without the method.
+  Expect<Equal<Serializable<User>, IpcUncloneable<User>>>,
+  Expect<Equal<Serializable<() => void>, IpcUncloneable<() => void>>>,
+  Expect<Equal<Serializable<{ run: () => void }>, IpcUncloneable<{ run: () => void }>>>,
+  // A class with only data still arrives, as a plain object without its identity.
+  Expect<Equal<Serializable<Account>, { id: string; createdAt: Date }>>,
   // Built-ins the algorithm reproduces with their prototypes intact.
   Expect<Equal<Serializable<Date>, Date>>,
   Expect<Equal<Serializable<Map<string, Date>>, Map<string, Date>>>,
   Expect<Equal<Serializable<Set<number>>, Set<number>>>,
   Expect<Equal<Serializable<Uint8Array>, Uint8Array>>,
+  // Electron converts Buffer on the way across.
+  Expect<Equal<Serializable<Buffer>, Uint8Array>>,
+  // A built-in subclass keeps its base, not its own surface.
+  Expect<Equal<Serializable<RangeError>, Error>>,
   // Tuples keep their labels and arity; optional and readonly modifiers survive.
-  Expect<Equal<Serializable<[id: string, run: () => void]>, [id: string, run: never]>>,
-  Expect<Equal<Serializable<{ a?: string }>, { a?: string }>>,
-  Expect<Equal<Serializable<{ readonly a: string }>, { readonly a: string }>>,
-  // Recurses through arrays and nested objects.
+  Expect<Equal<Serializable<[id: string, at: Date]>, [id: string, at: Date]>>,
   Expect<
     Equal<
-      Serializable<{ users: User[] }>,
-      { users: { id: string; createdAt: Date; greet: never }[] }
+      Serializable<[id: string, run: () => void]>,
+      IpcUncloneable<[id: string, run: () => void]>
     >
   >,
-  // Unions distribute; primitives and `any` pass through untouched.
-  Expect<Equal<Serializable<string | (() => void)>, string | never>>,
+  Expect<Equal<Serializable<{ a?: string }>, { a?: string }>>,
+  Expect<Equal<Serializable<{ readonly a: string }>, { readonly a: string }>>,
+  // Recurses through arrays and nested objects, and the failure propagates out.
+  Expect<
+    Equal<Serializable<{ accounts: Account[] }>, { accounts: { id: string; createdAt: Date }[] }>
+  >,
+  Expect<Equal<Serializable<{ users: User[] }>, IpcUncloneable<{ users: User[] }>>>,
+  // A union is only as cloneable as its least cloneable member.
+  Expect<Equal<Serializable<string | (() => void)>, IpcUncloneable<string | (() => void)>>>,
   Expect<Equal<Serializable<any>, any>>,
   Expect<Equal<Serializable<string | undefined>, string | undefined>>,
 ];

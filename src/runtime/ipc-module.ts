@@ -3,9 +3,12 @@ import { ipcMain, type IpcMain, type IpcMainEvent, type IpcMainInvokeEvent } fro
 import type {
   ChannelDef,
   ChannelType,
+  CloneableChannel,
+  HandlerDef,
   IpcEventMap,
   IpcHandler,
   IpcListener,
+  ListenerDef,
   IpcModuleCleanup,
   IpcModuleRegistration,
   MaybePromise,
@@ -51,16 +54,8 @@ export function defineChannel<
     kind: type.startsWith("handle") ? "handler" : "listener",
     once: type.endsWith("Once"),
   } as T extends "handle" | "handleOnce"
-    ? {
-        kind: "handler";
-        fn: IpcHandler<TArgs, TResult, TEmit>;
-        once: boolean;
-      }
-    : {
-        kind: "listener";
-        fn: IpcListener<TArgs, TResult, TEmit>;
-        once: boolean;
-      };
+    ? HandlerDef<TArgs, TResult, TEmit>
+    : ListenerDef<TArgs, TResult, TEmit>;
 }
 
 /** Options accepted by {@link defineIpcModule}. */
@@ -330,8 +325,10 @@ export function defineIpcEvents<TEvents extends IpcEventMap>(): TEvents {
 export function createIpcHelpers<TEmit extends IpcEventMap>() {
   return {
     /** Register a request/response channel via `ipcMain.handle`. */
-    handle<TArgs extends any[] = any[], TResult = any>(fn: IpcHandler<TArgs, TResult, TEmit>) {
-      return defineChannel("handle", fn);
+    handle<TArgs extends any[] = any[], TResult = any>(
+      fn: IpcHandler<TArgs, TResult, TEmit>,
+    ): CloneableChannel<HandlerDef<TArgs, TResult, TEmit>, TArgs, TResult> {
+      return defineChannel("handle", fn) as never;
     },
 
     /**
@@ -343,13 +340,19 @@ export function createIpcHelpers<TEmit extends IpcEventMap>() {
      * registered". Use `handle` for anything a multi-window app can call more
      * than once.
      */
-    handleOnce<TArgs extends any[] = any[], TResult = any>(fn: IpcHandler<TArgs, TResult, TEmit>) {
-      return defineChannel("handleOnce", fn);
+    handleOnce<TArgs extends any[] = any[], TResult = any>(
+      fn: IpcHandler<TArgs, TResult, TEmit>,
+    ): CloneableChannel<HandlerDef<TArgs, TResult, TEmit>, TArgs, TResult> {
+      return defineChannel("handleOnce", fn) as never;
     },
 
     /** Register a fire-and-forget channel via `ipcMain.on`. */
-    listen<TArgs extends any[] = any[], TResult = any>(fn: IpcListener<TArgs, TResult, TEmit>) {
-      return defineChannel("listen", fn);
+    // `unknown` in the result slot: a listener's return value is never sent
+    // back to the renderer, so only its arguments have to survive cloning.
+    listen<TArgs extends any[] = any[], TResult = any>(
+      fn: IpcListener<TArgs, TResult, TEmit>,
+    ): CloneableChannel<ListenerDef<TArgs, TResult, TEmit>, TArgs, unknown> {
+      return defineChannel("listen", fn) as never;
     },
 
     /**
@@ -359,8 +362,10 @@ export function createIpcHelpers<TEmit extends IpcEventMap>() {
      * message from any window consumes the listener, and later sends are
      * silently ignored.
      */
-    listenOnce<TArgs extends any[] = any[], TResult = any>(fn: IpcListener<TArgs, TResult, TEmit>) {
-      return defineChannel("listenOnce", fn);
+    listenOnce<TArgs extends any[] = any[], TResult = any>(
+      fn: IpcListener<TArgs, TResult, TEmit>,
+    ): CloneableChannel<ListenerDef<TArgs, TResult, TEmit>, TArgs, unknown> {
+      return defineChannel("listenOnce", fn) as never;
     },
   };
 }

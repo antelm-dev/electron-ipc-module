@@ -31,7 +31,7 @@ Modular, type-safe IPC for Electron. Declare handlers in the main process, load 
 - Typed renderer events via `reply`, `sender.send`, and `senderFrame.send`
 - Container to load, unload, and observe multiple IPC modules, with channel-collision detection and transactional rollback
 - Rollup plugin that generates a typed `ipcRenderer` bridge from `*.ipc.ts` files
-- Generated types model the structured clone boundary, so unserializable payloads fail to compile
+- Generated types model the structured clone boundary, so an unserializable payload fails to compile where the channel is declared
 - Runtime authorization and payload-validation hooks
 - Standalone generate/check/watch CLI
 
@@ -297,16 +297,39 @@ Three things that are Electron's behavior rather than this package's, and are wo
 
 Electron serializes IPC payloads with the structured clone algorithm, which does not carry JavaScript semantics across intact. The generated bridge wraps every parameter and return type in `Serializable<T>` so the renderer's types describe what it actually receives, not what the main process returned:
 
-| In the main process                                                  | In the renderer                                       |
-| -------------------------------------------------------------------- | ----------------------------------------------------- |
-| Class instance                                                       | Plain object with its own properties; methods `never` |
-| Method or function-valued property                                   | `never` — structured clone throws `DataCloneError`    |
-| `Date`, `RegExp`, `Map`, `Set`, `Error`, `ArrayBuffer`, typed arrays | Preserved, prototype included                         |
-| Getter                                                               | Flattened to the value it evaluated to at send time   |
+| In the main process                                                  | In the renderer                                             |
+| -------------------------------------------------------------------- | ----------------------------------------------------------- |
+| Function, symbol, `Promise`, `WeakMap`, `WeakSet` — anywhere inside  | Nothing: the **whole payload** is rejected                  |
+| Class instance carrying methods                                      | Nothing: rejected, because the type cannot prove it is safe |
+| Class instance with only data                                        | Plain object; `instanceof` is false                         |
+| `Buffer`                                                             | `Uint8Array` — Electron converts it                         |
+| Subclass of `Error`, `Date`, or a typed array                        | The base type, without added fields or methods              |
+| `Date`, `RegExp`, `Map`, `Set`, `Error`, `ArrayBuffer`, typed arrays | Preserved, prototype included                               |
+| Getter                                                               | Flattened to the value it evaluated to at send time         |
 
-So a handler returning a `User` class instance gives the renderer `{ id: string; greet: never }`, and `user.greet()` is a compile error at the call site instead of `undefined is not a function` at runtime. Return plain data, or map to a DTO inside the handler.
+**Rejection is all-or-nothing.** Structured clone does not drop the offending member and deliver the rest — it throws `DataCloneError` and the `invoke()` rejects before any result arrives. So `Serializable<T>` resolves to `IpcUncloneable<T>` for the entire payload rather than mapping one property to `never`. That propagates out of arrays, tuples, `Map`, `Set`, and nested objects, and a union is only as cloneable as its least cloneable member.
 
-`Serializable<T>` is exported from the root if you want it in your own wrappers.
+The check runs where you declare the channel, not only in the generated bridge:
+
+```ts
+class Session {
+  constructor(public id: string) {}
+  isExpired(): boolean {
+    return false;
+  }
+}
+
+defineIpcModule("session", {
+  // Type 'IpcUncloneable<Session>' is not assignable to type 'ChannelDef'.
+  current: handle(async (): Promise<Session> => new Session("s1")),
+});
+```
+
+Return plain data, or map to a DTO inside the handler. Arguments are checked the same way in both directions; a `listen` callback's _return_ value is exempt, since it is never sent back.
+
+A class with methods is rejected even though a prototype method would in fact be dropped silently rather than throwing — a type cannot distinguish an own function property from a prototype one, and the safe reading is the one that never surprises you at runtime.
+
+`Serializable<T>` and `IpcUncloneable<T>` are exported from the root if you want them in your own wrappers.
 
 #### `handleOnce` and `listenOnce` are process-scoped
 
@@ -352,7 +375,7 @@ Open an issue if you have a case this pattern genuinely cannot cover.
 
 ### Intentional public exports
 
-The root export contains the runtime values shown above, `IpcAuthorizationError`, `IpcChannelCollisionError`, `IpcContainerDisposedError`, and `IpcObserverError`. Its exported types are the callback/event types (`IpcHandler`, `IpcListener`, typed Electron event/sender types), module/container registration types, option/context types, channel definition types, generator analysis/option types, and the general `MaybePromise`, `MethodsOnly`, `Serializable`, and `LoggerLike` helpers. These lower-level types are public so wrappers and tooling can describe compatible registrations without importing internal files.
+The root export contains the runtime values shown above, `IpcAuthorizationError`, `IpcChannelCollisionError`, `IpcContainerDisposedError`, and `IpcObserverError`. Its exported types are the callback/event types (`IpcHandler`, `IpcListener`, typed Electron event/sender types), module/container registration types, option/context types, channel definition types, generator analysis/option types, and the general `MaybePromise`, `MethodsOnly`, `Serializable`, `IpcUncloneable`, and `LoggerLike` helpers. These lower-level types are public so wrappers and tooling can describe compatible registrations without importing internal files.
 
 The Rollup and Vite paths export the plugin default plus `IpcBridgeOptions`. The generator path exports `resolveIpcBridgeOptions`, `getIpcBridgeWatchTargets`, `isIpcBridgeRelevantFile`, `runIpcBridgeGeneration`, and `IpcBridgeOptions`. Compile-time API tests import all of these through the built package export map; no public-contract test imports `src`.
 
