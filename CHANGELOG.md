@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.1](https://github.com/antelm-dev/electron-ipc-module/compare/v0.6.0...v0.6.1) (2026-08-10)
+
+
+### Bug Fixes
+
+* **docs:** clarify Standard Schema transformations ([#39](https://github.com/antelm-dev/electron-ipc-module/issues/39)) ([3dde24a](https://github.com/antelm-dev/electron-ipc-module/commit/3dde24a8f4d596fcc1eb18f390029e732abcb6d1))
+
 ## [0.6.0](https://github.com/antelm-dev/electron-ipc-module/compare/v0.5.0...v0.6.0) (2026-08-10)
 
 
