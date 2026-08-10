@@ -4,14 +4,14 @@ Thanks for helping improve `electron-ipc-module`.
 
 ## Development setup
 
-- Use Node.js `20` or `>=22` and pnpm `9.15.9` (Corepack is recommended).
+- Use Node.js `>=22.5.0` and pnpm `9.15.9` (Corepack is recommended).
 - Install dependencies with `pnpm install --frozen-lockfile`.
 - Build the package with `pnpm run build`.
 
 ## Making changes
 
 1. Fork the repository and create a focused branch from the default branch.
-2. Read the [0.1 compatibility contract](README.md#01-compatibility-contract) in the README before changing runtime or module support. ESM-only support, supported Node.js and Electron versions, and public package paths are deliberate boundaries.
+2. Read the [compatibility contract](README.md#compatibility-contract) and [1.0 stability contract](README.md#10-stability-contract) before changing runtime or module support. ESM-only support, supported Node.js and Electron versions, and public package paths are deliberate boundaries.
 3. Keep public API changes intentional: the supported package entry points are documented in the README.
 4. Open an issue to discuss a large feature, broad refactor, or API change before investing in a pull request.
 5. Add or update tests in `test/` for every behavior change. Keep fixture IPC modules under `test/fixtures/` when testing bridge analysis or generation.

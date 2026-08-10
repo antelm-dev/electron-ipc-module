@@ -54,6 +54,16 @@ npm install electron-ipc-module
 - **TypeScript:** `>=5.0.0 <7`, an install-enforced peer dependency. The packed-consumer matrix runs generation and public-API compilation on 5.0.4, the latest 5.x, and 6.x. The generator stack imports `typescript` at runtime for program and type-checker access. TypeScript 7 moved that API off the package's root entry point (`exports["."]` now resolves to `lib/version.cjs`) and behind `typescript/unstable/*`, so it is excluded until the replacement API loses its `unstable` prefix.
 - **Package paths:** only `.`, `./rollup-plugin`, and `./generator` are public. Files under `dist/` are implementation details. Only `./rollup-plugin`, `./generator`, and the CLI need `typescript`; the `.` runtime entry does not import it.
 
+### 1.0 stability contract
+
+Starting with 1.0.0, this project follows Semantic Versioning. A breaking change to the following requires a new major version:
+
+- documented exports and their TypeScript signatures on `.`, `./rollup-plugin`, and `./generator`;
+- documented runtime behavior, error classes and public properties, CLI commands and flags, and generated bridge method names and types;
+- the declared Node.js, Electron, and TypeScript compatibility ranges, when a previously accepted version is removed.
+
+Patches may correct behavior that contradicts the documentation, close a security hole, or fix types without rejecting previously supported source. A new compile error in previously valid use is breaking unless it is required to close a vulnerability. Generated source formatting, internal helper names, logger and diagnostic wording, analyzer warning order, files below `dist/`, and test utilities are not public API. Deprecations will be documented before removal whenever a safe transition is possible.
+
 ## Quick start
 
 ### 1. Define an IPC module

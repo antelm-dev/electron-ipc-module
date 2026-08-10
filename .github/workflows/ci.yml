@@ -222,3 +222,23 @@ jobs:
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Drive the generated bridge in a real renderer
         run: xvfb-run -a pnpm run --dir example smoke
+
+  required:
+    # One stable check name for branch protection. Matrix job names necessarily
+    # change as supported Node and Electron lines advance.
+    if: always()
+    needs: [lint, test, coverage, packed-consumer, compatibility, example]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify every required job succeeded
+        env:
+          LINT: ${{ needs.lint.result }}
+          TEST: ${{ needs.test.result }}
+          COVERAGE: ${{ needs.coverage.result }}
+          PACKED_CONSUMER: ${{ needs.packed-consumer.result }}
+          COMPATIBILITY: ${{ needs.compatibility.result }}
+          EXAMPLE: ${{ needs.example.result }}
+        run: |
+          for result in "$LINT" "$TEST" "$COVERAGE" "$PACKED_CONSUMER" "$COMPATIBILITY" "$EXAMPLE"; do
+            test "$result" = success
+          done
