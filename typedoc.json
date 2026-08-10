@@ -1,0 +1,21 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "entryPoints": ["src/index.ts", "src/rollup-plugin.ts", "src/bridge/ipc-bridge.ts"],
+  "tsconfig": "tsconfig.vitest.json",
+  "out": "docs",
+  "readme": "README.md",
+  "excludePrivate": true,
+  "excludeInternal": true,
+  "categorizeByGroup": true,
+  "intentionallyNotExported": [
+    "IsCloneable",
+    "IsAny",
+    "Cloned",
+    "ChannelArgs",
+    "AnyIpcEventMap",
+    "IpcEventArgs"
+  ],
+  "navigationLinks": {
+    "GitHub": "https://github.com/antelm-dev/electron-ipc-module"
+  }
+}

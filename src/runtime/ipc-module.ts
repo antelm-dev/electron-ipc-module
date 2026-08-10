@@ -440,7 +440,7 @@ export function createIpcHelpers<TEmit extends IpcEventMap>() {
     /**
      * Register a one-shot fire-and-forget channel via `ipcMain.once`.
      *
-     * Process-scoped like {@link createIpcHelpers.handleOnce}: the first
+     * Process-scoped like {@link handleOnce}: the first
      * message from any window consumes the listener, and later sends are
      * silently ignored.
      */
