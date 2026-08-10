@@ -400,6 +400,7 @@ Analyzes `*.ipc.ts` files and generates a typed bridge for the renderer.
 **Static analysis tips**
 
 - Use `*.ipc.ts` file names
+- **One `defineIpcModule` per file.** The bridge is grouped into one entry named after the file, so a second module in the same file has nowhere to go. Generation fails rather than emitting the first and dropping the rest, which would register both on `ipcMain` while the renderer only ever saw one.
 - Prefer a plain object literal in `defineIpcModule(...)`
 - Avoid spreads in the channels object for complete bridge typing
 - Use a string literal for the module prefix so build-time and runtime channel names cannot diverge

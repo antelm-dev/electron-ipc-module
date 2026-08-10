@@ -112,19 +112,23 @@ export function isCallToExport(
   return isIpcModuleExportSymbol(resolveValueSymbol(checker, nameNode), exportName);
 }
 
-/** Depth-first search for the first call to the package export `exportName`. */
-export function findCallTo(
+/**
+ * Depth-first search for every call to the package export `exportName`, in
+ * source order. A match is not descended into, so a nested call of the same
+ * export is attributed to its outermost enclosing one.
+ */
+export function findCallsTo(
   checker: ts.TypeChecker,
   node: ts.Node,
   exportName: string,
-): ts.CallExpression | undefined {
+): ts.CallExpression[] {
   if (ts.isCallExpression(node) && isCallToExport(checker, node, exportName)) {
-    return node;
+    return [node];
   }
 
-  let found: ts.CallExpression | undefined;
+  const found: ts.CallExpression[] = [];
   ts.forEachChild(node, (child) => {
-    found ??= findCallTo(checker, child, exportName);
+    found.push(...findCallsTo(checker, child, exportName));
   });
   return found;
 }

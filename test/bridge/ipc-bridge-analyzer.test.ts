@@ -8,6 +8,7 @@ import { createTsProgram } from "../../src/shared/ts-utils.js";
 
 const FIXTURES_DIR = fileURLToPath(new URL("../fixtures/analyzer", import.meta.url));
 const FIXTURE_IPC_DIR = join(FIXTURES_DIR, "ipc");
+const FIXTURE_MULTI_DIR = join(FIXTURES_DIR, "multi");
 const FIXTURE_TSCONFIG = join(FIXTURES_DIR, "tsconfig.json");
 const IGNORED_TEST_FILE = join(FIXTURE_IPC_DIR, "ignored.test.ipc.ts");
 
@@ -105,6 +106,14 @@ describe("extractModules", () => {
     ]);
     expect(duplicate?.warnings).toContain(
       'Duplicate emitted event "shared-event" - using first declaration',
+    );
+  });
+
+  it("rejects a file declaring more than one defineIpcModule", () => {
+    const program = createTsProgram(FIXTURE_TSCONFIG);
+
+    expect(() => extractModules(program, FIXTURE_MULTI_DIR)).toThrow(
+      /two-modules\.ipc\.ts:6:\d+ a file may declare only one defineIpcModule/,
     );
   });
 

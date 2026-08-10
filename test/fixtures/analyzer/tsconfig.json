@@ -9,5 +9,5 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["ipc/**/*.ipc.ts", "../../../src/runtime/ipc-module.ts"]
+  "include": ["ipc/**/*.ipc.ts", "multi/**/*.ipc.ts", "../../../src/runtime/ipc-module.ts"]
 }

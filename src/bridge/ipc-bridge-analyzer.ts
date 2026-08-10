@@ -5,7 +5,7 @@ import ts from "typescript";
 
 import {
   collectEmittedEvents,
-  findCallTo,
+  findCallsTo,
   getCallToExport,
   isCallToExportExpression,
   serializeType,
@@ -236,6 +236,12 @@ function collectExportedDefineIpcEvents(
   }
 }
 
+/** `file:line:column` for a node, matching the generator's diagnostic style. */
+function formatLocation(sourceFile: ts.SourceFile, node: ts.Node): string {
+  const { character, line } = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
+  return `${sourceFile.fileName}:${line + 1}:${character + 1}`;
+}
+
 /**
  * Analyze one source file into an {@link AnalyzedIpcModule}, or `null` if it
  * contains no `defineIpcModule(prefix, channels)` call.
@@ -244,14 +250,26 @@ function analyzeIpcSourceFile(
   checker: ts.TypeChecker,
   sourceFile: ts.SourceFile,
 ): AnalyzedIpcModule | null {
-  const defineCall = findCallTo(checker, sourceFile, "defineIpcModule");
+  const defineCalls = findCallsTo(checker, sourceFile, "defineIpcModule");
+  // The bridge keys one entry per file, so a second module here has nowhere to
+  // go. Registering it still works, which is exactly why this has to be loud:
+  // silently generating only the first leaves main and renderer disagreeing.
+  if (defineCalls.length > 1) {
+    throw new Error(
+      `${formatLocation(sourceFile, defineCalls[1])} ` +
+        "a file may declare only one defineIpcModule: the generated bridge groups channels " +
+        "under a single entry named after the file, so only the first module would reach the " +
+        "renderer. Move this module into its own *.ipc.ts file",
+    );
+  }
+
+  const defineCall = defineCalls[0];
   if (!defineCall || defineCall.arguments.length < 2) return null;
 
   const prefixArg = defineCall.arguments[0];
   if (!ts.isStringLiteralLike(prefixArg)) {
-    const location = sourceFile.getLineAndCharacterOfPosition(prefixArg.getStart(sourceFile));
     throw new Error(
-      `${sourceFile.fileName}:${location.line + 1}:${location.character + 1} ` +
+      `${formatLocation(sourceFile, prefixArg)} ` +
         "defineIpcModule prefix must be a string literal so the generated bridge uses the runtime channel name",
     );
   }
