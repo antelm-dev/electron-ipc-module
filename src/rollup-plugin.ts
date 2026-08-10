@@ -7,6 +7,7 @@ import {
 } from "./bridge/ipc-bridge.js";
 
 export type { IpcBridgeOptions } from "./bridge/ipc-bridge.js";
+export type { LoggerLike } from "./shared/types/runtime.js";
 
 /**
  * Rollup plugin that regenerates the typed preload bridge from `*.ipc.ts`
