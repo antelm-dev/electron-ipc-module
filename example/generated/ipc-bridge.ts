@@ -1,4 +1,4 @@
-import { ipcRenderer, type IpcRendererEvent } from 'electron';
+import { ipcRenderer } from 'electron';
 import type { Serializable } from 'electron-ipc-module';
 
 type Unsubscribe = () => void;
@@ -7,8 +7,8 @@ function createOnHelper<TArgs extends any[]>(
   channel: string,
   listener: (...args: TArgs) => void,
 ): Unsubscribe {
-  const wrapped = (_event: IpcRendererEvent, ...args: TArgs) => {
-    listener(...args);
+  const wrapped = (...rawArgs: any[]) => {
+    listener(...(rawArgs.slice(1) as TArgs));
   };
 
   ipcRenderer.on(channel, wrapped);
@@ -19,8 +19,8 @@ function createOnceHelper<TArgs extends any[]>(
   channel: string,
   listener: (...args: TArgs) => void,
 ): Unsubscribe {
-  const wrapped = (_event: IpcRendererEvent, ...args: TArgs) => {
-    listener(...args);
+  const wrapped = (...rawArgs: any[]) => {
+    listener(...(rawArgs.slice(1) as TArgs));
   };
 
   ipcRenderer.once(channel, wrapped);

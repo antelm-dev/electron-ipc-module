@@ -36,11 +36,9 @@ function serializable(typeStr: string) {
   return `Serializable<${typeStr}>`;
 }
 
-/** The `electron` import line, including `IpcRendererEvent` when events exist. */
-function generateImportLine(hasEmittedEvents: boolean) {
-  return hasEmittedEvents
-    ? `import { ipcRenderer, type IpcRendererEvent } from 'electron';`
-    : `import { ipcRenderer } from 'electron';`;
+/** The runtime `electron` import line. */
+function generateImportLine() {
+  return `import { ipcRenderer } from 'electron';`;
 }
 
 /** Type-only import of `Serializable`, erased at build time. */
@@ -57,8 +55,8 @@ function generateEventHelpers() {
     "  channel: string,",
     "  listener: (...args: TArgs) => void,",
     "): Unsubscribe {",
-    "  const wrapped = (_event: IpcRendererEvent, ...args: TArgs) => {",
-    "    listener(...args);",
+    "  const wrapped = (...rawArgs: any[]) => {",
+    "    listener(...(rawArgs.slice(1) as TArgs));",
     "  };",
     "",
     "  ipcRenderer.on(channel, wrapped);",
@@ -69,8 +67,8 @@ function generateEventHelpers() {
     "  channel: string,",
     "  listener: (...args: TArgs) => void,",
     "): Unsubscribe {",
-    "  const wrapped = (_event: IpcRendererEvent, ...args: TArgs) => {",
-    "    listener(...args);",
+    "  const wrapped = (...rawArgs: any[]) => {",
+    "    listener(...(rawArgs.slice(1) as TArgs));",
     "  };",
     "",
     "  ipcRenderer.once(channel, wrapped);",
@@ -151,7 +149,7 @@ export function generateBridge(modules: AnalyzedIpcModule[]) {
     "IPC bridge",
   );
   const hasEmittedEvents = modules.some((ipcModule) => ipcModule.emittedEvents.length > 0);
-  const lines = [generateImportLine(hasEmittedEvents), generateSerializableImportLine(), ""];
+  const lines = [generateImportLine(), generateSerializableImportLine(), ""];
 
   if (hasEmittedEvents) {
     lines.push(...generateEventHelpers());

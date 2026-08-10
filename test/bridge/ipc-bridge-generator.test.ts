@@ -75,9 +75,11 @@ describe("generateBridge", () => {
       }),
     ]);
 
-    expect(code).toContain("import { ipcRenderer, type IpcRendererEvent } from 'electron';");
+    expect(code).toContain("import { ipcRenderer } from 'electron';");
     expect(code).toContain("function createOnHelper");
     expect(code).toContain("function createOnceHelper");
+    expect(code).toContain("const wrapped = (...rawArgs: any[]) =>");
+    expect(code).toContain("listener(...(rawArgs.slice(1) as TArgs))");
     expect(code).toContain(
       'onProfileUpdated: (listener: (...args: Serializable<[id: string, name: string]>) => void): Unsubscribe => createOnHelper<Serializable<[id: string, name: string]>>("profile-updated", listener)',
     );
