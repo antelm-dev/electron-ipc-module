@@ -2,12 +2,13 @@
 
 ## Supported versions
 
-This package is pre-1.0. Fixes go to the latest published version only; there are no maintenance branches for older ones. Upgrade before reporting, if you can.
+Until 1.0.0, security fixes go to the latest pre-1.0 release. Starting with 1.0.0, fixes are released on the latest stable major. There are no maintenance branches for older majors or pre-1.0 releases; upgrade before reporting, if you can. Reports that also affect an older release are still useful, but the fix will target the supported line.
 
-| Version | Supported |
-| ------- | --------- |
-| latest  | yes       |
-| older   | no        |
+| Version                           | Supported |
+| --------------------------------- | --------- |
+| latest stable major               | yes       |
+| latest `<1.0` (until 1.0 ships)   | yes       |
+| older majors and pre-1.0 releases | no        |
 
 ## Reporting a vulnerability
 
