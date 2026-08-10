@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.5.0](https://github.com/antelm-dev/electron-ipc-module/compare/v0.4.0...v0.5.0) (2026-08-10)
+
+
+### Features
+
+* **generator:** let callers supply the logger, and add CLI --quiet ([f882663](https://github.com/antelm-dev/electron-ipc-module/commit/f88266398e8c2919ba76f9d741a7fc956de32e5e))
+* let callers supply the generator's logger, and add CLI --quiet ([7a47fca](https://github.com/antelm-dev/electron-ipc-module/commit/7a47fca6bcd408f50fb7df99e223dfc728f4c28d))
+
+
+### Bug Fixes
+
+* **cli:** route watch-mode output through the configured logger ([cf53c16](https://github.com/antelm-dev/electron-ipc-module/commit/cf53c166b2bcc8a38c1790da7277e140872c1204))
+* **generator:** reject a file that declares more than one IPC module ([3f0ea69](https://github.com/antelm-dev/electron-ipc-module/commit/3f0ea69ef66f05b4db000f16991c456e7339df43))
+* **packaging:** raise the engines floor to what the generator actually needs ([5f6e76e](https://github.com/antelm-dev/electron-ipc-module/commit/5f6e76ef8dae8bbfbd812108629d2c8738e9162b))
+* reject multi-module IPC files and correct the engines floor ([7ecca0b](https://github.com/antelm-dev/electron-ipc-module/commit/7ecca0bf541bec38416e2d0e9f19b9e3844751f6))
+
 ## [0.4.0](https://github.com/antelm-dev/electron-ipc-module/compare/v0.3.0...v0.4.0) (2026-08-10)
 
 
