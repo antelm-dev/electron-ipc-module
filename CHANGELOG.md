@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.4.0](https://github.com/antelm-dev/electron-ipc-module/compare/v0.3.0...v0.4.0) (2026-08-10)
+
+
+### ⚠ BREAKING CHANGES
+
+* **types:** payloads that previously type-checked now fail. A handler returning a class instance with methods, or any object holding a function, symbol, promise, WeakMap, or WeakSet, is rejected at `defineIpcModule` instead of arriving with those members typed `never`. Return plain data or map to a DTO. `Serializable<Buffer>` is now `Uint8Array`, and a custom `Error` subclass is now `Error`, so subclass-only members no longer type-check in the renderer.
+
+### Bug Fixes
+
+* **container:** isolate observer exceptions from lifecycle results ([cac8106](https://github.com/antelm-dev/electron-ipc-module/commit/cac8106fffbb7b17b27fe4d4e5760dc2b74a09b9))
+* **container:** isolate observer exceptions from lifecycle results ([4b7155b](https://github.com/antelm-dev/electron-ipc-module/commit/4b7155bb6d3edc2742c1d5b5aa73af2454be91ac)), closes [#22](https://github.com/antelm-dev/electron-ipc-module/issues/22)
+* **packaging:** declare typescript as a peer dependency ([3dd39ac](https://github.com/antelm-dev/electron-ipc-module/commit/3dd39acd73be3ed4870bcc22170806231770b2f6)), closes [#19](https://github.com/antelm-dev/electron-ipc-module/issues/19)
+* **packaging:** declare typescript as a peer dependency, narrow the Electron support claim ([f6ef31f](https://github.com/antelm-dev/electron-ipc-module/commit/f6ef31fbf1e3492e11f9835cde97c8341b2f9a24))
+* **types:** reject a payload whose nested value cannot be cloned ([fc9405f](https://github.com/antelm-dev/electron-ipc-module/commit/fc9405ffb9066736e1ad51fa0b4ab862f09941f3))
+
 ## [0.3.0](https://github.com/antelm-dev/electron-ipc-module/compare/v0.2.1...v0.3.0) (2026-08-03)
 
 
