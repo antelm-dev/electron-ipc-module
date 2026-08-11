@@ -67,14 +67,49 @@ function forEachModuleSpecifier(node: ts.Node, visit: (specifier: ts.Node) => vo
 }
 
 /**
- * The source files whose types can reach the generated bridge: the IPC entry
- * files and everything they import, transitively.
+ * Whether `file` can put declarations in scope without anyone importing it.
  *
- * Resolution goes through the checker rather than a hand-rolled module
- * resolver, so path mapping, conditional exports, and `.js` specifiers pointing
- * at `.ts` sources are followed exactly as the compiler follows them.
+ * These are the mechanisms TypeScript provides for influencing a program
+ * without an import edge, so no traversal can reach them however thorough it
+ * is. They have to be swept in separately.
  */
-function collectReachableFiles(
+function contributesAmbientDeclarations(file: ts.SourceFile): boolean {
+  // A script — no top-level import or export — declares straight into the
+  // global scope. `lib.*.d.ts` and most `@types` packages are this shape.
+  if (!ts.isExternalModule(file)) return true;
+
+  return file.statements.some((statement) => {
+    if (!ts.isModuleDeclaration(statement)) return false;
+    // `declare global { … }` inside a module.
+    if ((statement.flags & ts.NodeFlags.GlobalAugmentation) !== 0) return true;
+    // `declare module "…" { … }` reshapes that module program-wide.
+    return ts.isStringLiteral(statement.name);
+  });
+}
+
+/**
+ * The source files whose declarations can reach the generated bridge.
+ *
+ * Stated as an exclusion, because that is the safe direction: a file is left
+ * out only when it *cannot* influence the analyzed types — it is a module, it
+ * declares nothing ambient, and nothing in the IPC graph pulls it in. Anything
+ * else is checked.
+ *
+ * Import edges are followed through the checker rather than a hand-rolled
+ * resolver, so path mapping, conditional exports, and `.js` specifiers pointing
+ * at `.ts` sources behave exactly as the compiler says. Everything that
+ * contributes globals or module augmentations is then added outright, since by
+ * construction there is no edge to follow to it.
+ *
+ * `/// <reference path="…" />` is followed as well, though the sweep above
+ * appears to subsume it: a referenced file either declares ambiently — and is
+ * already in — or is a module, which cannot influence a type without being
+ * imported. It stays because it is three lines, it is a dependency edge
+ * TypeScript documents, and the cost of that reasoning being wrong is silently
+ * generating a bridge from types nobody checked. `types` and `lib` directives
+ * are left to the sweep, which takes them via `@types` and `lib.*.d.ts`.
+ */
+function collectDiagnosticScope(
   program: ts.Program,
   entryPaths: readonly string[],
 ): ts.SourceFile[] {
@@ -87,25 +122,34 @@ function collectReachableFiles(
   const reached = new Set<ts.SourceFile>();
   const pending: ts.SourceFile[] = [];
 
-  for (const entry of entryPaths) {
-    const file = byPath.get(toPosixPath(resolve(entry)));
+  const enqueue = (file: ts.SourceFile | undefined) => {
     if (file && !reached.has(file)) {
       reached.add(file);
       pending.push(file);
     }
+  };
+
+  for (const entry of entryPaths) {
+    enqueue(byPath.get(toPosixPath(resolve(entry))));
+  }
+  // Ambient contributors are seeded rather than appended, so their own imports
+  // are followed too: a global `.d.ts` can import the types it re-declares.
+  for (const file of program.getSourceFiles()) {
+    if (contributesAmbientDeclarations(file)) enqueue(file);
   }
 
   while (pending.length > 0) {
     const file = pending.pop() as ts.SourceFile;
+
     forEachModuleSpecifier(file, (specifier) => {
       for (const declaration of checker.getSymbolAtLocation(specifier)?.getDeclarations() ?? []) {
-        const imported = declaration.getSourceFile();
-        if (!reached.has(imported)) {
-          reached.add(imported);
-          pending.push(imported);
-        }
+        enqueue(declaration.getSourceFile());
       }
     });
+
+    for (const reference of file.referencedFiles) {
+      enqueue(byPath.get(toPosixPath(resolve(dirname(file.fileName), reference.fileName))));
+    }
   }
 
   return [...reached];
@@ -139,7 +183,7 @@ export function createTsProgram(tsconfigPath: string, scopeTo?: readonly string[
     configFileParsingDiagnostics: parsed.errors,
   });
 
-  const scoped = scopeTo && collectReachableFiles(program, scopeTo);
+  const scoped = scopeTo && collectDiagnosticScope(program, scopeTo);
   const fileDiagnostics = scoped
     ? scoped.flatMap((file) => [
         ...program.getSyntacticDiagnostics(file),
