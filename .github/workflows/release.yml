@@ -61,3 +61,22 @@ jobs:
           else
             npm publish --access public
           fi
+      - name: Say when `next` needs retiring by hand
+        # A prerelease has to publish under some tag or it would take `latest`,
+        # so `next` outlives the line it was created for: after a stable
+        # release it still points at the last prerelease, and
+        # `npm install …@next` installs something older than `latest`.
+        #
+        # This cannot be automated here. Trusted publishing authenticates
+        # `npm publish` and `npm stage publish` only, not `npm dist-tag`, so a
+        # step that moved the tag would fail after the package was already
+        # published:
+        # https://docs.npmjs.com/trusted-publishers/#limitations-and-future-improvements
+        #
+        # Printing the command keeps it in front of whoever cut the release
+        # rather than in a document they would have to remember to open.
+        if: ${{ !contains(needs.release-please.outputs.tag, '-') }}
+        run: |
+          if npm dist-tag ls electron-ipc-module | grep -q '^next:'; then
+            echo "::warning title=Stale next dist-tag::A stable release just shipped and \`next\` still points at a prerelease. Run: npm dist-tag rm electron-ipc-module next"
+          fi

@@ -56,6 +56,20 @@ docs: clarify generator options
 
 Keep pull requests small and describe the problem, the solution, and the tests you ran. CI validates commit messages and runs the checks on Node.js 20 and 22 against the supported Electron test matrix.
 
+## Releasing
+
+Releases are automated: release-please opens a release pull request, and merging it publishes to npm from GitHub Actions using trusted publishing, with provenance.
+
+One step is not automated. A prerelease has to publish under some dist-tag or it would take `latest`, so it publishes under `next` — and that tag outlives the line it was created for. Once the stable release ships, `next` still points at the last prerelease, and `npm install electron-ipc-module@next` installs something _older_ than `latest`. After a stable release that followed a prerelease, retire the tag:
+
+```bash
+npm dist-tag rm electron-ipc-module next
+```
+
+The release workflow prints this as a job warning whenever the tag is still set after a stable release, so it surfaces on the run that created the situation rather than in a document someone has to remember to open.
+
+It cannot do it for you: [trusted publishing](https://docs.npmjs.com/trusted-publishers/#limitations-and-future-improvements) authenticates `npm publish` and `npm stage publish` only, not `npm dist-tag`. Automating the move would mean storing a long-lived npm token as a repository secret — a trade against the reason trusted publishing was adopted in the first place.
+
 ## Reporting issues
 
 Please include a minimal reproduction, expected and actual behavior, your Node.js and Electron versions, and any relevant configuration. Do not include secrets, tokens, or private application code.
