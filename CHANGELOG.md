@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.0.1](https://github.com/antelm-dev/electron-ipc-module/compare/v1.0.0...v1.0.1) (2026-08-11)
+
+
+### Bug Fixes
+
+* **generator:** follow every module reference when scoping diagnostics ([10a787e](https://github.com/antelm-dev/electron-ipc-module/commit/10a787edb67311c9aad9920344054ce1471325dc))
+* **generator:** include UMD globals in diagnostic scope ([3a23758](https://github.com/antelm-dev/electron-ipc-module/commit/3a23758a0204aacb2ebc20d9842987b5d55f2f83))
+* **generator:** scope by exclusion so ambient declarations are checked ([8e830b6](https://github.com/antelm-dev/electron-ipc-module/commit/8e830b69b71ab4c0e5041984ede28ee104c532ec))
+* **generator:** scope type diagnostics to the IPC sources and their imports ([21ac8fe](https://github.com/antelm-dev/electron-ipc-module/commit/21ac8fe894a8d6d7316ab29c4939373c292a44ec))
+* **generator:** scope type diagnostics to the IPC sources and their imports ([aafad15](https://github.com/antelm-dev/electron-ipc-module/commit/aafad15afad6be6d545b7de990566542888b2672)), closes [#51](https://github.com/antelm-dev/electron-ipc-module/issues/51)
+
 ## [1.0.0](https://github.com/antelm-dev/electron-ipc-module/compare/v1.0.0-rc.1...v1.0.0) (2026-08-10)
 
 
