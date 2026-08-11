@@ -4,6 +4,7 @@
   "tsconfig": "tsconfig.vitest.json",
   "out": "docs",
   "readme": "README.md",
+  "projectDocuments": ["guides/*.md"],
   "excludePrivate": true,
   "excludeInternal": true,
   "categorizeByGroup": true,
