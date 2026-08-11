@@ -247,6 +247,22 @@ describe("runIpcBridgeGeneration", () => {
       expect(existsSync(outFile)).toBe(false);
     });
 
+    it("still aborts on a type error reached only through an inline import type", () => {
+      // `import("…").Payload` in type position, with no import statement at
+      // all — the shape the analyzer itself emits into the bridge.
+      expect(() => runIpcBridgeGeneration(scopedFixture("broken-import-type"))).toThrow(
+        /TypeScript failed[\s\S]*payload\.ts/,
+      );
+      expect(existsSync(outFile)).toBe(false);
+    });
+
+    it("still aborts on a type error reached only through a dynamic import", () => {
+      expect(() => runIpcBridgeGeneration(scopedFixture("broken-dynamic-import"))).toThrow(
+        /TypeScript failed[\s\S]*payload\.ts/,
+      );
+      expect(existsSync(outFile)).toBe(false);
+    });
+
     it("still aborts on a type error in a file an IPC source imports", () => {
       // The scope has to follow imports: a broken dependency can make the
       // analyzer serialize a wrong type into the bridge, which is exactly the

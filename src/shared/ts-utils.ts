@@ -30,11 +30,40 @@ function assertNoDiagnostics(diagnostics: readonly ts.Diagnostic[]) {
   );
 }
 
-/** Module specifier of an `import`/`export … from "…"`, when it has one. */
-function getModuleSpecifier(statement: ts.Statement): ts.Expression | undefined {
-  if (!ts.isImportDeclaration(statement) && !ts.isExportDeclaration(statement)) return undefined;
-  const specifier = statement.moduleSpecifier;
-  return specifier && ts.isStringLiteralLike(specifier) ? specifier : undefined;
+/**
+ * Visit every node in `node`'s subtree that names a module.
+ *
+ * All four forms can pull a type into the bridge, so all four have to be
+ * followed:
+ *
+ * - `import`/`export … from "…"`, the only one that is always top level;
+ * - `import("…").T` written inline in type position — which is exactly the
+ *   shape the analyzer itself emits, so it is the form most likely to appear
+ *   in a file whose types reach the renderer;
+ * - dynamic `import("…")` in an expression;
+ * - `import x = require("…")`.
+ *
+ * The walk is recursive rather than a scan of `sourceFile.statements`: only
+ * the first form is guaranteed to be a top-level statement.
+ */
+function forEachModuleSpecifier(node: ts.Node, visit: (specifier: ts.Node) => void): void {
+  if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
+    if (node.moduleSpecifier) visit(node.moduleSpecifier);
+  } else if (ts.isImportTypeNode(node)) {
+    if (ts.isLiteralTypeNode(node.argument) && ts.isStringLiteralLike(node.argument.literal)) {
+      visit(node.argument.literal);
+    }
+  } else if (
+    ts.isImportEqualsDeclaration(node) &&
+    ts.isExternalModuleReference(node.moduleReference)
+  ) {
+    visit(node.moduleReference.expression);
+  } else if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
+    const [specifier] = node.arguments;
+    if (specifier && ts.isStringLiteralLike(specifier)) visit(specifier);
+  }
+
+  ts.forEachChild(node, (child) => forEachModuleSpecifier(child, visit));
 }
 
 /**
@@ -68,9 +97,7 @@ function collectReachableFiles(
 
   while (pending.length > 0) {
     const file = pending.pop() as ts.SourceFile;
-    for (const statement of file.statements) {
-      const specifier = getModuleSpecifier(statement);
-      if (!specifier) continue;
+    forEachModuleSpecifier(file, (specifier) => {
       for (const declaration of checker.getSymbolAtLocation(specifier)?.getDeclarations() ?? []) {
         const imported = declaration.getSourceFile();
         if (!reached.has(imported)) {
@@ -78,7 +105,7 @@ function collectReachableFiles(
           pending.push(imported);
         }
       }
-    }
+    });
   }
 
   return [...reached];
