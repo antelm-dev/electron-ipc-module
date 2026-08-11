@@ -166,19 +166,20 @@ pnpm start
 
 ### Runtime (`electron-ipc-module`)
 
-| Export                                         | Description                                     |
-| ---------------------------------------------- | ----------------------------------------------- |
-| `defineIpcModule(prefix, channels, options?)`  | Register a group of IPC channels                |
-| `createIpcHelpers<TEmit>()`                    | Create typed `handle` / `listen` helpers        |
-| `defineIpcEvents<TEvents>()`                   | Declare an emitted-event map for the bridge     |
-| `defineChannel(type, fn)`                      | Low-level channel definition behind the helpers |
-| `handle`, `handleOnce`, `listen`, `listenOnce` | Default untyped helpers                         |
-| `createIpcContainer()`                         | Load, unload, and observe IPC modules           |
-| `IpcAuthorizationError`                        | Thrown when `authorize` returns `false`         |
-| `IpcValidationError`                           | Thrown when a schema `validate` entry rejects   |
-| `IpcChannelCollisionError`                     | Thrown on a duplicate physical channel name     |
-| `IpcContainerDisposedError`                    | Thrown by lifecycle calls after `dispose()`     |
-| `IpcObserverError`                             | Reported on `error` when an observer threw      |
+| Export                                        | Description                                                          |
+| --------------------------------------------- | -------------------------------------------------------------------- |
+| `defineIpcModule(prefix, channels, options?)` | Register a group of IPC channels                                     |
+| `createIpcHelpers<TEmit>()`                   | Create typed `handle` / `listen` helpers                             |
+| `defineIpcEvents<TEvents>()`                  | Declare an emitted-event map for the bridge                          |
+| `defineChannel(type, fn)`                     | Extension point for wrapper authors; prefer the preset helpers       |
+| `handle`, `listen`                            | Default untyped helpers                                              |
+| `handleOnce`, `listenOnce`                    | Process-scoped one-shot helpers; the first call from any window wins |
+| `createIpcContainer()`                        | Load, unload, and observe IPC modules                                |
+| `IpcAuthorizationError`                       | Thrown when `authorize` returns `false`                              |
+| `IpcValidationError`                          | Thrown when a schema `validate` entry rejects                        |
+| `IpcChannelCollisionError`                    | Thrown on a duplicate physical channel name                          |
+| `IpcContainerDisposedError`                   | Thrown by lifecycle calls after `dispose()`                          |
+| `IpcObserverError`                            | Reported on `error` when an observer threw                           |
 
 The exported types, and why the generator's types live on a separate entry point, are documented in [compatibility and stability](./guides/compatibility.md#where-the-public-types-live).
 
