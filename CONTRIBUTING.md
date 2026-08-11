@@ -11,7 +11,7 @@ Thanks for helping improve `electron-ipc-module`.
 ## Making changes
 
 1. Fork the repository and create a focused branch from the default branch.
-2. Read the [compatibility contract](README.md#compatibility-contract) and [1.0 stability contract](README.md#10-stability-contract) before changing runtime or module support. ESM-only support, supported Node.js and Electron versions, and public package paths are deliberate boundaries.
+2. Read the [compatibility contract](guides/compatibility.md#compatibility-contract) and [1.0 stability contract](guides/compatibility.md#10-stability-contract) before changing runtime or module support. ESM-only support, supported Node.js and Electron versions, and public package paths are deliberate boundaries.
 3. Keep public API changes intentional: the supported package entry points are documented in the README.
 4. Open an issue to discuss a large feature, broad refactor, or API change before investing in a pull request.
 5. Add or update tests in `test/` for every behavior change. Keep fixture IPC modules under `test/fixtures/` when testing bridge analysis or generation.

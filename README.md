@@ -6,35 +6,14 @@
 
 Modular, type-safe IPC for Electron. Declare handlers in the main process, load them with lifecycle management, and auto-generate a typed preload bridge for the renderer.
 
-## Contents
-
-- [Features](#features)
-- [Installation](#installation)
-- [Upgrading to 1.0](#upgrading-to-10)
-- [Compatibility contract](#compatibility-contract)
-- [Quick start](#quick-start)
-- [Preload constraints](#preload-constraints)
-- [Example](#example)
-- [API](#api)
-  - [Runtime](#runtime-electron-ipc-module)
-  - [Boundaries and caveats](#boundaries-and-caveats)
-  - [Error contract](#error-contract)
-  - [Intentional public exports](#intentional-public-exports)
-  - [Rollup plugin](#rollup-plugin-electron-ipc-modulerollup-plugin)
-  - [Generator CLI](#generator-cli)
-- [Security model](#security-model)
-- [Recommended layout](#recommended-layout)
-
 ## Features
 
-- Compact API for `ipcMain.handle`, `handleOnce`, `on`, and `once`
-- Automatic channel prefixing (`profile:get`, `profile:save`, …)
+- Compact API for `ipcMain.handle`, `handleOnce`, `on`, and `once`, with automatic channel prefixing (`profile:get`, `profile:save`, …)
 - Typed renderer events via `reply`, `sender.send`, and `senderFrame.send`
 - Container to load, unload, and observe multiple IPC modules, with channel-collision detection and transactional rollback
-- Rollup plugin that generates a typed `ipcRenderer` bridge from `*.ipc.ts` files
+- Rollup/Vite plugin that generates a typed `ipcRenderer` bridge from `*.ipc.ts` files
 - Generated types model the structured clone boundary, so an unserializable payload fails to compile where the channel is declared
-- Runtime authorization and payload-validation hooks
-- Standalone generate/check/watch CLI
+- Runtime authorization and payload-validation hooks, and a standalone generate/check/watch CLI
 
 ## Installation
 
@@ -42,32 +21,16 @@ Modular, type-safe IPC for Electron. Declare handlers in the main process, load 
 npm install electron-ipc-module
 ```
 
-**Peer dependencies:** `electron >= 12` and `typescript >= 5 < 7`. The generator, the CLI, and the Rollup plugin load the TypeScript compiler at runtime to analyse your IPC modules, so it is a real requirement rather than a build-time convenience — bundlers that transpile TypeScript without installing the compiler, Vite among them, would otherwise fail at first run. See the [compatibility contract](#compatibility-contract).
+| Requirement | Range                                        |
+| ----------- | -------------------------------------------- |
+| Node.js     | `>=22.5.0`                                   |
+| Electron    | `>=12` peer; majors 41–43 build-tested in CI |
+| TypeScript  | `>=5.0.0 <7` peer                            |
+| Modules     | ESM only                                     |
 
-## Upgrading to 1.0
+`typescript` is a real peer dependency, not a build-time convenience: the generator, the CLI, and the Rollup plugin load the compiler at runtime to analyse your IPC modules, so bundlers that transpile TypeScript without installing it — Vite among them — would otherwise fail at first run.
 
-Version 1.0 stabilizes the API shipped in 0.6.2; an application already using 0.6.2 needs no source changes. Install the stable release with `npm install electron-ipc-module`, regenerate the committed bridge, and run `electron-ipc-module check` in CI. Applications on 0.6.1 or earlier should upgrade through 0.6.2 first and review the breaking changes recorded in the [changelog](./CHANGELOG.md).
-
-## Compatibility contract
-
-- **Modules:** ESM only. Use `import`; CommonJS `require()` is not a supported entry point. This applies to the package itself — your preload output is a separate question, covered in [preload constraints](#preload-constraints).
-- **Node.js:** `>=22.5.0`. The floor is not the start of a major line because the generator resolves `ipcDir` with Node's own globbing rather than a dependency: `fs.globSync` arrived in 22.0.0 and `path.matchesGlob` in 22.5.0, and below that a glob `ipcDir` throws. CI runs the packed-artifact job at 22.5.0 exactly — driving the built package with plain Node, including the glob paths that reach both APIs — so the floor is tested rather than merely claimed. The unit matrix runs the latest 22 and 24.
-- **Electron:** two different claims, deliberately kept apart.
-  - The peer range is `>=12`, an **API-compatibility** claim: nothing here uses an Electron API newer than 12. It is a permissive install-time constraint because npm enforces it, and refusing to install on a version that works helps nobody.
-  - **Build/type-checked** support is narrower. CI installs the latest patch of Electron's three currently supported stable majors — 41, 42, and 43 when this contract was frozen — and runs the type check, the public-API check, and the unit suite against each, advancing with [Electron's latest-three-stable support policy](https://www.electronjs.org/docs/latest/tutorial/electron-timelines). A separate packed-consumer check installs Electron 12.2.3 with TypeScript 5.0.4, generates a bridge, and compiles the public API; majors between 12 and the current support window should work but are not checked individually. Bug reports from that range are welcome and will be treated as real.
-  - **The matrix does not launch Electron; one job does.** The unit suite mocks Electron (`test/setup.ts`), so the matrix shows that this package compiles and type-checks against each major — not that IPC behaves identically at runtime on all three. Separately, the `example` job runs [`example/smoke.ts`](./example/smoke.ts) under a real Electron process on the latest supported major: it loads the generated bridge into a sandboxed, context-isolated preload and drives an `invoke`, a `send`, and both main-to-renderer event paths, asserting on the results. That is what proves the generator and the runtime agree on channel names — the one thing a mock cannot show. Structured-clone edge cases beyond those four calls are still covered against the mock only.
-- **TypeScript:** `>=5.0.0 <7`, an install-enforced peer dependency. The packed-consumer matrix runs generation and public-API compilation on 5.0.4, the latest 5.x, and 6.x. The generator stack imports `typescript` at runtime for program and type-checker access. TypeScript 7 moved that API off the package's root entry point (`exports["."]` now resolves to `lib/version.cjs`) and behind `typescript/unstable/*`, so it is excluded until the replacement API loses its `unstable` prefix.
-- **Package paths:** only `.`, `./rollup-plugin`, and `./generator` are public. Files under `dist/` are implementation details. Only `./rollup-plugin`, `./generator`, and the CLI need `typescript`; the `.` runtime entry does not import it.
-
-### 1.0 stability contract
-
-Starting with 1.0.0, this project follows Semantic Versioning. A breaking change to the following requires a new major version:
-
-- documented exports and their TypeScript signatures on `.`, `./rollup-plugin`, and `./generator`;
-- documented runtime behavior, error classes and public properties, CLI commands and flags, and generated bridge method names and types;
-- the declared Node.js, Electron, and TypeScript compatibility ranges, when a previously accepted version is removed.
-
-Patches may correct behavior that contradicts the documentation, close a security hole, or fix types without rejecting previously supported source. A new compile error in previously valid use is breaking unless it is required to close a vulnerability. Generated source formatting, internal helper names, logger and diagnostic wording, analyzer warning order, files below `dist/`, and test utilities are not public API. Deprecations will be documented before removal whenever a safe transition is possible.
+See [compatibility and stability](./guides/compatibility.md) for what CI actually verifies and the SemVer contract.
 
 ## Quick start
 
@@ -217,6 +180,8 @@ pnpm start
 | `IpcContainerDisposedError`                    | Thrown by lifecycle calls after `dispose()`     |
 | `IpcObserverError`                             | Reported on `error` when an observer threw      |
 
+The exported types, and why the generator's types live on a separate entry point, are documented in [compatibility and stability](./guides/compatibility.md#where-the-public-types-live).
+
 **Typed events.** Pass an event map to `createIpcHelpers<TEmit>()` to type `event.reply`, `event.sender.send`, and `event.senderFrame?.send`. Emitted events are **not** prefixed by `defineIpcModule`.
 
 Alternatively, declare an event map with `defineIpcEvents<TEvents>()` and export it from the `*.ipc.ts` file. The bridge plugin reads the type argument to generate typed `on<Event>` / `once<Event>` listeners in the renderer — useful when a module emits events without wiring them through `createIpcHelpers`:
@@ -265,7 +230,7 @@ defineIpcModule("profile", channels, {
 
 Callback validators only inspect the original arguments: their return value is discarded. Standard Schema validators are different—their parsed output replaces the callback arguments, so coercion and field stripping carry through to the handler.
 
-For `handle` channels, rejected promises propagate back through `ipcRenderer.invoke`. For fire-and-forget `listen` channels, failures are caught and passed to `onListenerError` (or logged) so they never become unhandled rejections.
+For `handle` channels, rejected promises propagate back through `ipcRenderer.invoke`. For fire-and-forget `listen` channels, failures are caught and passed to `onListenerError` (or logged) so they never become unhandled rejections. The full per-stage behavior is in the [error contract](./guides/error-contract.md).
 
 **Event namespacing.** Set `eventPrefix: true` to turn emitted event channels such as `updated` into `profile:updated`. The generated API remains `bridge.profile.onUpdated(...)`. A string may be supplied for a custom physical prefix.
 
@@ -302,15 +267,7 @@ All lifecycle mutations (`load`, `loadAll`, `unload`, `unloadAll`, and `dispose`
 
 Because the queue is global, overlap has no special race behavior: `load(); unload()` loads and then unloads, two loads replace in call order, and no operation can interleave with a `loadAll` batch or `dispose`.
 
-#### Observer exceptions
-
-Observers are notifications, not participants. An exception thrown by a `loaded`, `unloaded`, or `error` listener never changes the outcome of the lifecycle operation that emitted it:
-
-- The operation still resolves or rejects on its own merits, so its result always agrees with `has()`, `names`, and the registered channels. A throwing `loaded` listener cannot leave a rejected `loadAll()` partially committed, and cannot un-commit a successful `load()`.
-- An error already in flight is never replaced. A throwing `error` listener cannot mask the registration or cleanup failure it was told about, and a throwing `unloaded` listener cannot swallow an `AggregateError` from a failed cleanup.
-- The exception itself is reported on `error`, wrapped in `IpcObserverError` so it is distinguishable from a lifecycle failure. It carries `event`, `moduleName`, and the original `reason`.
-
-One case is terminal and silent by design: an `error` listener that throws while being told about another observer's exception. Re-entering `error` would recurse and there is no other channel, so it is dropped. Keep `error` listeners defensive.
+Exceptions thrown by `loaded`, `unloaded`, or `error` listeners are isolated from the lifecycle operation and reported as `IpcObserverError` — see [observer exceptions](./guides/error-contract.md#observer-exceptions).
 
 ### Boundaries and caveats
 
@@ -360,7 +317,7 @@ A class with methods is rejected even though a prototype method would in fact be
 
 #### No cancellation or progress API, by design
 
-There is no `AbortSignal` on the handler context and no streaming channel kind. Doing it properly means per-call correlation IDs, per-call state in the container, and teardown when a window closes — a subsystem, for a problem two IPC channels already solve:
+There is no `AbortSignal` on the handler context and no streaming channel kind — two IPC channels already cover it:
 
 ```ts
 // main
@@ -381,30 +338,6 @@ defineIpcModule("export", {
 ```
 
 Open an issue if you have a case this pattern genuinely cannot cover.
-
-### Error contract
-
-| Failure                | Behavior                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Authorization          | `authorize` returning `false` creates `IpcAuthorizationError`. A thrown/rejected authorization error is preserved. Handlers reject; listeners use listener-failure behavior below.                                                                                                                                                                                                                                                                                                                                                                        |
-| Validation             | A callback validator's thrown/rejected value is preserved; a schema reporting issues creates `IpcValidationError` carrying them. The channel callback is not called. Handlers reject; listeners use listener-failure behavior below.                                                                                                                                                                                                                                                                                                                      |
-| Handler callback       | A thrown value or rejected promise is preserved and returned through Electron's `invoke` rejection path.                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| Listener callback      | Synchronous throws and promise rejections are caught. `onListenerError(error, context, event)` is called once, or the error is logged when no hook exists. If the hook itself throws, that secondary error is logged; it is never rethrown into Electron's event emitter.                                                                                                                                                                                                                                                                                 |
-| Cleanup                | Every relevant channel cleanup and module cleanup is attempted. State is removed even on failure. One or more failures reject with `AggregateError`; rollback errors are aggregated with the original failure, original error first.                                                                                                                                                                                                                                                                                                                      |
-| Registration collision | Electron registration errors are preserved and already-attached channels are rolled back. Container-detected duplicate physical channels reject with `IpcChannelCollisionError`; cleanup failure produces an `AggregateError` containing both errors.                                                                                                                                                                                                                                                                                                     |
-| Generator diagnostics  | TypeScript configuration and option errors, and unsafe-to-generate conditions, throw `Error` and abort without writing output. Syntax and type errors abort only when they are in an IPC source or a file one imports — see [what gets type-checked](#what-gets-type-checked). Analyzer limitations such as spreads and duplicate event declarations are returned in each module's `warnings` and logged, but generation continues. CLI commands report thrown diagnostics and exit non-zero; `check` also exits non-zero when generated output is stale. |
-
-`load` emits `error` only when an error listener is attached, so Node's special unhandled `error` event cannot mask the rejection. `loaded` is emitted after commit and `unloaded` after state removal. Exceptions thrown by observers are isolated from the lifecycle operation and reported as `IpcObserverError`; see [observer exceptions](#observer-exceptions).
-
-### Intentional public exports
-
-**The root is runtime-only.** It exports the runtime values shown above, `IpcAuthorizationError`, `IpcValidationError`, `IpcChannelCollisionError`, `IpcContainerDisposedError`, and `IpcObserverError`. Its exported types are the callback/event types (`IpcHandler`, `IpcListener`, typed Electron event/sender types), module/container registration types, option/context/validator types, channel definition types, and the general `MaybePromise`, `MethodsOnly`, `Serializable`, `IpcUncloneable`, and `LoggerLike` helpers. These lower-level types are public so wrappers and tooling can describe compatible registrations without importing internal files.
-
-**The generator's own types are not on the root.** `IpcBridgeOptions`, `ResolvedIpcBridgeOptions`, `AnalyzedIpcModule`, `ChannelInfo`, and `EmittedEventInfo` describe how the bridge is _produced_, not what a main-process consumer depends on, so they live on `electron-ipc-module/generator` alongside the functions that return them. Keeping them off the root means the analyzer's output shape can change without that being a breaking change for everyone who only ever imports `defineIpcModule`.
-
-`electron-ipc-module/rollup-plugin` exports the plugin default plus `IpcBridgeOptions` and `LoggerLike` — the same import works in a Vite config, since the plugin implements Vite's compatible plugin API. `electron-ipc-module/generator` exports `resolveIpcBridgeOptions`, `getIpcBridgeWatchTargets`, `isIpcBridgeRelevantFile`, and `runIpcBridgeGeneration`, plus the five types above and `LoggerLike`.
-
-Compile-time API tests import all of this through the built package export map; no public-contract test imports `src`. The moved types are additionally asserted _absent_ from the root, so a barrel re-export cannot quietly widen the surface again.
 
 ### Rollup plugin (`electron-ipc-module/rollup-plugin`)
 
@@ -495,6 +428,13 @@ main/
 renderer/
   ipc.d.ts            # declares window.ipc from `typeof bridge`
 ```
+
+## Further reading
+
+- [Compatibility and stability](./guides/compatibility.md) — supported versions, what CI verifies, the SemVer contract, and where the public types live
+- [Error contract](./guides/error-contract.md) — per-stage failure behavior and observer exception isolation
+- [Changelog](./CHANGELOG.md)
+- [Contributing](./CONTRIBUTING.md)
 
 ## License
 
