@@ -11,7 +11,7 @@
     "rollup",
     "typescript"
   ],
-  "homepage": "https://github.com/antelm-dev/electron-ipc-module#readme",
+  "homepage": "https://antelm-dev.github.io/electron-ipc-module/",
   "bugs": "https://github.com/antelm-dev/electron-ipc-module/issues",
   "license": "MIT",
   "author": "Adel Terki",
