@@ -54,7 +54,7 @@ fix: preserve listener cleanup order
 docs: clarify generator options
 ```
 
-Keep pull requests small and describe the problem, the solution, and the tests you ran. CI validates commit messages and runs the checks on Node.js 20 and 22 against the supported Electron test matrix.
+Keep pull requests small and describe the problem, the solution, and the tests you ran. CI validates commit messages and runs the checks on Node.js 22 and 24 against the supported Electron test matrix.
 
 ## Releasing
 
