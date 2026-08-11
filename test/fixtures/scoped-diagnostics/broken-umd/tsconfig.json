@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "lib": ["ES2021", "DOM"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": false,
+    "allowUmdGlobalAccess": true,
+    "noEmit": true
+  },
+  "include": ["**/*.ts", "../../../../src/runtime/ipc-module.ts"]
+}

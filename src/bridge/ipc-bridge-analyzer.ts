@@ -15,25 +15,21 @@ import type { AnalyzedIpcModule, ChannelInfo, EmittedEventInfo } from "../shared
 import { resolveIpcPattern, toPosixPath } from "../shared/utils.js";
 
 /**
- * Resolve the `ipcDir` glob to the absolute POSIX paths it matches.
+ * Absolute POSIX paths of the non-test `*.ipc.ts` files `ipcDir` selects.
  *
  * The pattern is normalized to forward slashes first: a backslash is an escape
  * character to the matcher, so a Windows-style `.\src\ipc` would otherwise
- * silently match nothing. Directories are left in — `**` matches them too, but
- * they can never be a program source file, so {@link isAnalyzableIpcFile}
- * discards them anyway.
+ * silently match nothing. Directories are dropped by the suffix filter — `**`
+ * matches them too, but they can never be a program source file.
+ *
+ * Pure filesystem work, needing no program. That is what lets the generator
+ * scope compiler diagnostics to these files before a program exists.
  */
-function collectMatchedIpcFiles(ipcDir: string): Set<string> {
+export function collectIpcFilePaths(ipcDir: string): string[] {
   const pattern = toPosixPath(resolveIpcPattern(ipcDir));
-  return new Set(globSync(pattern).map((filePath) => toPosixPath(resolve(filePath))));
-}
-
-/** A matched, non-test `*.ipc.ts` file is eligible for analysis. */
-function isAnalyzableIpcFile(fileName: string, matchedFiles: Set<string>): boolean {
-  if (!matchedFiles.has(fileName)) return false;
-  if (!fileName.endsWith(".ipc.ts")) return false;
-  if (fileName.includes(".test.")) return false;
-  return true;
+  return globSync(pattern)
+    .map((filePath) => toPosixPath(resolve(filePath)))
+    .filter((filePath) => filePath.endsWith(".ipc.ts") && !filePath.includes(".test."));
 }
 
 /** Warn about spread entries in the channels object — they can't be typed. */
@@ -323,12 +319,12 @@ function analyzeIpcSourceFile(
  */
 export function extractModules(program: ts.Program, ipcDir: string): AnalyzedIpcModule[] {
   const checker = program.getTypeChecker();
-  const matchedFiles = collectMatchedIpcFiles(ipcDir);
+  const matchedFiles = new Set(collectIpcFilePaths(ipcDir));
   const modules: AnalyzedIpcModule[] = [];
 
   for (const sourceFile of program.getSourceFiles()) {
     const fileName = toPosixPath(resolve(sourceFile.fileName));
-    if (!isAnalyzableIpcFile(fileName, matchedFiles)) continue;
+    if (!matchedFiles.has(fileName)) continue;
 
     const module = analyzeIpcSourceFile(checker, sourceFile);
     if (module) modules.push(module);

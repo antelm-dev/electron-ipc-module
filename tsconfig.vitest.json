@@ -3,5 +3,9 @@
   "compilerOptions": {
     "noEmit": true
   },
-  "include": ["src/**/*.ts", "test/**/*.ts", "vitest.config.ts"]
+  "include": ["src/**/*.ts", "test/**/*.ts", "vitest.config.ts"],
+  // These fixtures contain deliberate type errors — they exist to prove which
+  // ones abort generation and which ones do not, so they must not be checked
+  // as part of this repository's own sources.
+  "exclude": ["test/fixtures/scoped-diagnostics/**"]
 }
