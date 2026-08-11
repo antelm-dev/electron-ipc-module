@@ -6,7 +6,12 @@ import type {
   WebFrameMain,
 } from "electron";
 
-/** Keep only the method-valued properties of `T`, dropping data fields. */
+/**
+ * Keep only the method-valued properties of `T`, dropping data fields.
+ *
+ * @deprecated This generic helper is not specific to IPC. Define an equivalent
+ * mapped type in your project instead. It will be removed in the next major version.
+ */
 export type MethodsOnly<T> = {
   [K in keyof T as T[K] extends (...args: any[]) => any ? K : never]: T[K];
 };
