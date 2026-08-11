@@ -79,6 +79,9 @@ function contributesAmbientDeclarations(file: ts.SourceFile): boolean {
   if (!ts.isExternalModule(file)) return true;
 
   return file.statements.some((statement) => {
+    // `export as namespace Foo` makes a UMD module available as a global when
+    // `allowUmdGlobalAccess` is enabled.
+    if (ts.isNamespaceExportDeclaration(statement)) return true;
     if (!ts.isModuleDeclaration(statement)) return false;
     // `declare global { … }` inside a module.
     if ((statement.flags & ts.NodeFlags.GlobalAugmentation) !== 0) return true;

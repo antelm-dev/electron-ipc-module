@@ -280,6 +280,13 @@ describe("runIpcBridgeGeneration", () => {
       expect(existsSync(outFile)).toBe(false);
     });
 
+    it("still aborts on a type error in a UMD module contributing a global namespace", () => {
+      expect(() => runIpcBridgeGeneration(scopedFixture("broken-umd"))).toThrow(
+        /TypeScript failed[\s\S]*umd\.d\.ts/,
+      );
+      expect(existsSync(outFile)).toBe(false);
+    });
+
     it("still aborts on a type error in a file an IPC source imports", () => {
       // The scope has to follow imports: a broken dependency can make the
       // analyzer serialize a wrong type into the bridge, which is exactly the
