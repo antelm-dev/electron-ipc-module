@@ -202,13 +202,19 @@ export type TypedIpcMainEvent<TEmit extends IpcEventMap = AnyIpcEventMap> = Omit
   senderFrame: TypedWebFrameMain<TEmit> | null;
 };
 
-/** `IpcMainInvokeEvent` (for `handle`/`handleOnce`) with a typed `sender`. */
+/** `IpcMainInvokeEvent` (for `handle`/`handleOnce`) with a typed `sender` and lifecycle signal. */
 export type TypedIpcMainInvokeEvent<TEmit extends IpcEventMap = AnyIpcEventMap> = Omit<
   IpcMainInvokeEvent,
-  "sender" | "senderFrame"
+  "sender" | "senderFrame" | "signal"
 > & {
   sender: TypedWebContents<TEmit>;
   senderFrame: TypedWebFrameMain<TEmit> | null;
+  /**
+   * Aborts when the `WebContents` that initiated this invocation is destroyed.
+   * Shared by every invocation from the same sender, and built on first read:
+   * reading it needs a global `AbortController`, so Electron 15 or newer.
+   */
+  readonly signal: AbortSignal;
 };
 
 /** Callback for a `handle`/`handleOnce` channel — returns a value to the caller. */

@@ -1,4 +1,5 @@
 import type { StandardSchemaV1 } from "@standard-schema/spec";
+import { EventEmitter } from "node:events";
 
 import {
   createIpcEmitter,
@@ -45,6 +46,21 @@ const createIpc = () => {
     },
   };
 };
+
+const createInvokeSender = () => {
+  let destroyed = false;
+  const sender = Object.assign(new EventEmitter(), {
+    send: vi.fn(),
+    isDestroyed: vi.fn(() => destroyed),
+    destroy: () => {
+      destroyed = true;
+      sender.emit("destroyed");
+    },
+  });
+  return sender;
+};
+
+const createInvokeEvent = (sender = createInvokeSender()) => ({ sender, senderFrame: null });
 
 describe("createIpcEmitter", () => {
   const getAllWindows = vi.mocked(BrowserWindow.getAllWindows);
@@ -258,7 +274,7 @@ describe("defineIpcModule", () => {
       { authorize, validate: { save: validate } },
     )(ipc as never);
 
-    const event = { sender: {}, senderFrame: null };
+    const event = createInvokeEvent();
     await expect(handlers.get("secure:save")?.(event, "ok")).resolves.toBe("OK");
     expect(authorize).toHaveBeenCalledWith(event, {
       channel: "secure:save",
@@ -277,9 +293,9 @@ describe("defineIpcModule", () => {
       { authorize: () => false },
     )(ipc as never);
 
-    await expect(
-      handlers.get("secure:read")?.({ sender: {}, senderFrame: null }),
-    ).rejects.toBeInstanceOf(IpcAuthorizationError);
+    await expect(handlers.get("secure:read")?.(createInvokeEvent())).rejects.toBeInstanceOf(
+      IpcAuthorizationError,
+    );
     expect(handler).not.toHaveBeenCalled();
   });
 
@@ -299,9 +315,7 @@ describe("defineIpcModule", () => {
       },
     )(ipc as never);
 
-    await expect(handlers.get("secure:save")?.({ sender: {}, senderFrame: null })).rejects.toBe(
-      error,
-    );
+    await expect(handlers.get("secure:save")?.(createInvokeEvent())).rejects.toBe(error);
     expect(handler).not.toHaveBeenCalled();
   });
 
@@ -319,7 +333,7 @@ describe("defineIpcModule", () => {
       },
     )(ipc as never);
 
-    const event = { sender: {}, senderFrame: null };
+    const event = createInvokeEvent();
     await expect(handlers.get("secure:double")?.(event, "21")).resolves.toBe(42);
     expect(handler).toHaveBeenCalledWith(event, 21);
   });
@@ -352,7 +366,7 @@ describe("defineIpcModule", () => {
       { validate: { greet: callableSchema } },
     )(ipc as never);
 
-    const event = { sender: {}, senderFrame: null };
+    const event = createInvokeEvent();
     const call = handlers.get("secure:greet");
 
     // The schema's own API runs, and its parsed output reaches the handler.
@@ -382,7 +396,7 @@ describe("defineIpcModule", () => {
       },
     )(ipc as never);
 
-    const rejection = handlers.get("secure:save")?.({ sender: {}, senderFrame: null }, 1);
+    const rejection = handlers.get("secure:save")?.(createInvokeEvent(), 1);
     await expect(rejection).rejects.toBeInstanceOf(IpcValidationError);
     await expect(rejection).rejects.toThrow('channel "secure:save": 0.id: expected string');
     expect(handler).not.toHaveBeenCalled();
@@ -527,7 +541,9 @@ describe("defineIpcModule", () => {
       { eventPrefix: true },
     )(ipc as never);
 
-    await handlers.get("profile:save")?.({ sender: { send }, senderFrame: null });
+    const sender = createInvokeSender();
+    sender.send = send;
+    await handlers.get("profile:save")?.({ sender, senderFrame: null });
     expect(send).toHaveBeenCalledWith("profile:updated", "id");
   });
 
@@ -540,19 +556,191 @@ describe("defineIpcModule", () => {
 
     const handler = handlers.get("math:add");
     expect(handler).toBeTypeOf("function");
-    expect(await handler?.({} as never, 2, 3)).toBe(5);
+    expect(await handler?.(createInvokeEvent(), 2, 3)).toBe(5);
+  });
+});
+
+describe("defineIpcModule invoke lifecycle signals", () => {
+  it("shares one signal per sender and keeps senders isolated", async () => {
+    const { handlers, ipc } = createIpc();
+    const signals: AbortSignal[] = [];
+    const resolvers: Array<() => void> = [];
+
+    await defineIpcModule("jobs", {
+      run: handle((event) => {
+        signals.push(event.signal);
+        return new Promise<void>((resolve) => resolvers.push(resolve));
+      }),
+    })(ipc as never);
+
+    const firstSender = createInvokeSender();
+    const secondSender = createInvokeSender();
+    const first = handlers.get("jobs:run")?.(createInvokeEvent(firstSender));
+    const concurrent = handlers.get("jobs:run")?.(createInvokeEvent(firstSender));
+    const second = handlers.get("jobs:run")?.(createInvokeEvent(secondSender));
+
+    // Destruction is terminal for a sender, so its pending invocations all
+    // share one signal; a different window is a different lifetime.
+    expect(signals).toHaveLength(3);
+    expect(signals[0]).toBe(signals[1]);
+    expect(signals[0]).not.toBe(signals[2]);
+    expect(signals.map((signal) => signal.aborted)).toEqual([false, false, false]);
+
+    firstSender.destroy();
+    expect(signals.map((signal) => signal.aborted)).toEqual([true, true, false]);
+
+    resolvers.forEach((resolve) => resolve());
+    await Promise.all([first, concurrent, second]);
+  });
+
+  it("registers one destroyed listener however many invocations run", async () => {
+    const { handlers, ipc } = createIpc();
+    const sender = createInvokeSender();
+    const failure = new Error("nope");
+
+    await defineIpcModule("jobs", {
+      ok: handle((event) => (event.signal.aborted ? "gone" : "done")),
+      boom: handle(async (event) => {
+        void event.signal;
+        throw failure;
+      }),
+    })(ipc as never);
+
+    const pending = Array.from({ length: 20 }, (_, index) =>
+      index % 2
+        ? handlers.get("jobs:ok")?.(createInvokeEvent(sender))
+        : expect(handlers.get("jobs:boom")?.(createInvokeEvent(sender))).rejects.toBe(failure),
+    );
+
+    // The default EventEmitter cap is 10: one listener per invocation would
+    // warn about a leak on any window that fans out its invokes.
+    expect(sender.listenerCount("destroyed")).toBe(1);
+    await Promise.all(pending);
+    expect(sender.listenerCount("destroyed")).toBe(1);
+  });
+
+  it("stays off the sender until a handler reads the signal", async () => {
+    const { handlers, ipc } = createIpc();
+    const sender = createInvokeSender();
+
+    await defineIpcModule("jobs", { run: handle(() => "done") })(ipc as never);
+    expect(handlers.get("jobs:run")?.(createInvokeEvent(sender))).toBe("done");
+
+    // Nothing observes the sender, and no AbortController is constructed, for
+    // handlers that never touch `event.signal` — which is what keeps the
+    // Electron 12 peer floor working, since Node 14 has no global one.
+    expect(sender.listenerCount("destroyed")).toBe(0);
+  });
+
+  it("explains itself when the runtime has no global AbortController", async () => {
+    const { handlers, ipc } = createIpc();
+    const original = globalThis.AbortController;
+    let thrown: unknown;
+
+    await defineIpcModule("jobs", {
+      run: handle((event) => {
+        try {
+          return event.signal;
+        } catch (error) {
+          thrown = error;
+          return "caught";
+        }
+      }),
+    })(ipc as never);
+
+    // @ts-expect-error Simulating a Node 14 runtime, where the global is absent.
+    delete globalThis.AbortController;
+    try {
+      expect(handlers.get("jobs:run")?.(createInvokeEvent())).toBe("caught");
+    } finally {
+      globalThis.AbortController = original;
+    }
+
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toMatch(/Electron ships from 15.0.0/);
+  });
+
+  it("starts aborted when the sender was already destroyed", async () => {
+    const { handlers, ipc } = createIpc();
+    let signal: AbortSignal | undefined;
+
+    await defineIpcModule("jobs", {
+      run: handle((event) => void (signal = event.signal)),
+    })(ipc as never);
+
+    const sender = createInvokeSender();
+    sender.destroy();
+    await handlers.get("jobs:run")?.(createInvokeEvent(sender));
+
+    expect(signal?.aborted).toBe(true);
+    expect(sender.listenerCount("destroyed")).toBe(0);
+  });
+
+  it("aborts a retained signal when the sender is destroyed after settlement", async () => {
+    const { handlers, ipc } = createIpc();
+    const sender = createInvokeSender();
+    let signal: AbortSignal | undefined;
+
+    await defineIpcModule("jobs", {
+      run: handle((event) => {
+        signal = event.signal;
+        return "done";
+      }),
+    })(ipc as never);
+
+    expect(await handlers.get("jobs:run")?.(createInvokeEvent(sender))).toBe("done");
+    expect(signal?.aborted).toBe(false);
+
+    sender.destroy();
+    expect(signal?.aborted).toBe(true);
+  });
+
+  it("passes the signal through authorize and validate guards", async () => {
+    const { handlers, ipc } = createIpc();
+    const sender = createInvokeSender();
+    let signal: AbortSignal | undefined;
+
+    await defineIpcModule(
+      "jobs",
+      {
+        run: handle((event, value: number) => {
+          signal = event.signal;
+          return value;
+        }),
+      },
+      { authorize: () => true, validate: { run: () => undefined } },
+    )(ipc as never);
+
+    await handlers.get("jobs:run")?.(createInvokeEvent(sender), 1);
+    expect(signal).toBeInstanceOf(AbortSignal);
+    expect(signal?.aborted).toBe(false);
+
+    sender.destroy();
+    expect(signal?.aborted).toBe(true);
+  });
+
+  it("provides the lifecycle signal to handleOnce callbacks", async () => {
+    const { handlers, ipc } = createIpc();
+    let signal: AbortSignal | undefined;
+
+    await defineIpcModule("jobs", {
+      run: handleOnce((event) => void (signal = event.signal)),
+    })(ipc as never);
+
+    await handlers.get("jobs:run")?.(createInvokeEvent());
+    expect(signal).toBeInstanceOf(AbortSignal);
   });
 });
 
 describe("defineIpcModule event prefixing", () => {
   /** A sender rich enough to show what the proxy forwards, binds, and rewrites. */
-  const createSender = () => ({
-    id: 7,
-    send: vi.fn(),
-    describe(this: { id: number }) {
-      return this.id;
-    },
-  });
+  const createSender = () =>
+    Object.assign(createInvokeSender(), {
+      id: 7,
+      describe(this: { id: number }) {
+        return this.id;
+      },
+    });
 
   it("prefixes senderFrame.send and leaves other members intact", async () => {
     const { handlers, ipc } = createIpc();
@@ -659,16 +847,16 @@ describe("defineIpcModule event prefixing", () => {
 });
 
 describe("defineIpcModule guard dispatch", () => {
-  it("registers the raw callback when nothing needs wrapping", async () => {
+  it("always wraps handlers for lifecycle signals", async () => {
     const { handlers, ipc } = createIpc();
     const channel = handle(() => "pong");
 
     await defineIpcModule("fast", { ping: channel })(ipc as never);
 
-    // Identity, not just behaviour: with no authorize, validate, or
-    // eventPrefix there is nothing to wrap, and wrapping anyway would put a
-    // proxy on every call for no reason.
-    expect(handlers.get("fast:ping")).toBe(channel.fn);
+    // Every handler needs an event proxy now to carry `event.signal`, but the
+    // guard-free path still returns whatever the callback returned, unwrapped.
+    expect(handlers.get("fast:ping")).not.toBe(channel.fn);
+    expect(handlers.get("fast:ping")?.(createInvokeEvent())).toBe("pong");
   });
 
   it("wraps a listener for eventPrefix even without authorize or validate", async () => {
@@ -693,7 +881,7 @@ describe("defineIpcModule guard dispatch", () => {
 
     await defineIpcModule("secure", { read: handle(body) }, { authorize })(ipc as never);
 
-    await expect(handlers.get("secure:read")?.({} as never)).resolves.toBe("ok");
+    await expect(handlers.get("secure:read")?.(createInvokeEvent())).resolves.toBe("ok");
     expect(authorize).toHaveBeenCalledOnce();
     expect(body).toHaveBeenCalledOnce();
   });
@@ -775,7 +963,7 @@ describe("IpcValidationError message", () => {
       },
     )(ipc as never);
 
-    const rejection = handlers.get("secure:save")?.({ sender: {}, senderFrame: null }, 1);
+    const rejection = handlers.get("secure:save")?.(createInvokeEvent(), 1);
 
     await expect(rejection).rejects.toThrow(
       'IPC payload failed validation for channel "secure:save": user.name: bad; must be set',
