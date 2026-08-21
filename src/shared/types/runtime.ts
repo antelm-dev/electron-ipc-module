@@ -194,7 +194,10 @@ export type TypedIpcMainInvokeEvent<TEmit extends IpcEventMap = AnyIpcEventMap> 
 > & {
   sender: TypedWebContents<TEmit>;
   senderFrame: TypedWebFrameMain<TEmit> | null;
-  /** Aborts when the `WebContents` that initiated this invocation is destroyed. */
+  /**
+   * Aborts when the `WebContents` that initiated this invocation is destroyed.
+   * Shared by every invocation from the same sender.
+   */
   readonly signal: AbortSignal;
 };
 

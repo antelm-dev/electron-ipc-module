@@ -340,7 +340,7 @@ defineIpcModule("export", {
 });
 ```
 
-Invoke handlers also receive `event.signal`, which represents the lifetime of the renderer that made that particular call. It starts active and aborts if the originating window or other `WebContents` is destroyed. Check it before expensive work and before sending progress so a closed window does not leave unnecessary work running:
+Invoke handlers also receive `event.signal`, which represents the lifetime of the `WebContents` that made the call. It starts active and aborts once that window (or other `WebContents`) is destroyed. Check it before expensive work and before sending progress so a closed window does not leave unnecessary work running:
 
 ```ts
 defineIpcModule("export", {
@@ -356,7 +356,7 @@ defineIpcModule("export", {
 });
 ```
 
-The signal is cooperative: aborting it does not terminate the handler, select an error, or settle the renderer promise automatically. The library observes the sender only while that invocation is pending; after settlement, later destruction will not abort the released signal. Use the two-channel pattern above when cancellation must also work while the renderer is still alive.
+The signal is cooperative: aborting it does not terminate the handler, select an error, or settle the renderer promise automatically. It tracks destruction of the `WebContents` and nothing else — a reload or an in-place navigation abandons the pending invocation without aborting, because the `WebContents` itself survives. One read-only signal is shared by every invocation from the same sender, and it stays valid after the handler settles. Use the two-channel pattern above when cancellation must also work while the renderer is still alive.
 
 ### Rollup plugin (`electron-ipc-module/rollup-plugin`)
 

@@ -1,5 +1,11 @@
 import type { StandardSchemaV1 } from "@standard-schema/spec";
-import { ipcMain, type IpcMain, type IpcMainEvent, type IpcMainInvokeEvent } from "electron";
+import {
+  ipcMain,
+  type IpcMain,
+  type IpcMainEvent,
+  type IpcMainInvokeEvent,
+  type WebContents,
+} from "electron";
 
 import type {
   ChannelDef,
@@ -247,6 +253,28 @@ function wrapSendTarget<T extends object>(target: T, eventPrefix: string | undef
   });
 }
 
+const senderSignals = new WeakMap<WebContents, AbortSignal>();
+
+/**
+ * The lifecycle {@link AbortSignal} for a sender, aborted once it is destroyed.
+ *
+ * Cached per `WebContents` rather than per invocation: destruction is terminal,
+ * so every invoke from the same window shares one outcome, and one listener per
+ * sender stays clear of the default `EventEmitter` cap of 10 however many
+ * invocations are in flight.
+ */
+function senderSignal(sender: WebContents): AbortSignal {
+  const cached = senderSignals.get(sender);
+  if (cached) return cached;
+
+  const controller = new AbortController();
+  if (sender.isDestroyed()) controller.abort();
+  else sender.once("destroyed", () => controller.abort());
+
+  senderSignals.set(sender, controller.signal);
+  return controller.signal;
+}
+
 function wrapEvent<T extends IpcMainEvent | IpcMainInvokeEvent>(
   event: T,
   eventPrefix: string | undefined,
@@ -325,20 +353,12 @@ export function defineIpcModule<TChannels extends Record<string, ChannelDef>>(
 
         let fn: (...args: any[]) => any;
         if (def.kind === "handler") {
-          fn = async (event: IpcMainInvokeEvent, ...args: unknown[]) => {
-            const controller = new AbortController();
-            const abort = () => controller.abort();
-
-            event.sender.once("destroyed", abort);
-            try {
-              if (event.sender.isDestroyed()) abort();
-              return await (authorize || validator
-                ? runGuarded(event, args, controller.signal)
-                : callUserFunction(event, args, controller.signal));
-            } finally {
-              event.sender.removeListener("destroyed", abort);
-            }
-          };
+          fn =
+            authorize || validator
+              ? (event: IpcMainInvokeEvent, ...args: unknown[]) =>
+                  runGuarded(event, args, senderSignal(event.sender))
+              : (event: IpcMainInvokeEvent, ...args: unknown[]) =>
+                  callUserFunction(event, args, senderSignal(event.sender));
 
           if (def.once) ipc.handleOnce(channel, fn);
           else ipc.handle(channel, fn);
