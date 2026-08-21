@@ -87,7 +87,7 @@ describe("createIpcEmitter", () => {
   });
 
   it("sends only to the explicit target without enumerating windows", () => {
-    const target = { send: vi.fn() };
+    const target = { send: vi.fn(), isDestroyed: vi.fn(() => false) };
     const other = { send: vi.fn(), isDestroyed: vi.fn(() => false) };
     getAllWindows.mockReturnValue([{ webContents: other }] as never);
 
@@ -102,6 +102,19 @@ describe("createIpcEmitter", () => {
     expect(target.send).toHaveBeenCalledWith("jobs:completed", 42);
     expect(getAllWindows).not.toHaveBeenCalled();
     expect(other.send).not.toHaveBeenCalled();
+  });
+
+  it("does not send to a destroyed explicit target", () => {
+    const target = { send: vi.fn(), isDestroyed: vi.fn(() => true) };
+
+    createIpcEmitter<{ completed: [jobId: number] }>("jobs").emitTo(
+      target as never,
+      "completed",
+      42,
+    );
+
+    expect(target.send).not.toHaveBeenCalled();
+    expect(getAllWindows).not.toHaveBeenCalled();
   });
 });
 

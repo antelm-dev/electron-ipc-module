@@ -197,24 +197,44 @@ export const statusEvents = defineIpcEvents<StatusEvents>();
 ```
 
 For timers, jobs, file watchers, and other producers that run independently of
-an incoming IPC call, create a standalone emitter. `emit` broadcasts to every
-current window and ignores destroyed `webContents`:
+an incoming IPC call, pair a module event declaration with a standalone
+emitter. The module declaration is what lets bridge generation create the
+renderer listener:
 
 ```ts
-import { createIpcEmitter } from "electron-ipc-module";
+// jobs.ipc.ts
+import { defineIpcEvents, defineIpcModule } from "electron-ipc-module";
 
-type JobEvents = { "job-completed": [jobId: string] };
+export type JobEvents = { "job-completed": [jobId: string] };
+const channels = {};
+
+export const registerJobsIpc = defineIpcModule("jobs", channels, { eventPrefix: true });
+export const jobEvents = defineIpcEvents<JobEvents>();
+// -> bridge.jobs.onJobCompleted((jobId) => { ... })
+```
+
+The independent producer must use the same event prefix:
+
+```ts
+// jobs-producer.ts
+import { createIpcEmitter } from "electron-ipc-module";
+import type { JobEvents } from "./jobs.ipc.js";
+
 const jobs = createIpcEmitter<JobEvents>("jobs");
 
 setInterval(() => jobs.emit("job-completed", "nightly-report"), 60_000);
 // sends `jobs:job-completed` to every live window
-```
 
-Use `emitTo` when only one renderer should receive the event:
-
-```ts
+// Send only to one renderer.
 jobs.emitTo(window.webContents, "job-completed", "on-demand-report");
 ```
+
+Standalone emitters do not declare bridge listeners. Export
+`defineIpcEvents<TEvents>()` from the corresponding `*.ipc.ts` module, and keep
+its configured event prefix aligned with the string passed to
+`createIpcEmitter`. Phase 1 still repeats that prefix; a module-bound emitter
+that removes this desynchronization risk remains follow-up work. Both `emit`
+and `emitTo` ignore destroyed `webContents`.
 
 **Cleanup.** `defineIpcModule` accepts an optional `ready` hook. If registration fails, already-registered channels are rolled back automatically.
 

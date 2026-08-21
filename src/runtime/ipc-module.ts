@@ -14,6 +14,7 @@ import type {
   CloneableChannel,
   HandlerDef,
   IpcEventMap,
+  IpcEmitter,
   IpcHandler,
   IpcListener,
   ListenerDef,
@@ -24,6 +25,7 @@ import type {
 
 export type {
   IpcEventMap,
+  IpcEmitter,
   TypedWebContents,
   TypedWebFrameMain,
   TypedIpcMainEvent,
@@ -237,28 +239,6 @@ function prefixEventChannel(eventPrefix: string | undefined, channel: string) {
   return eventPrefix ? `${eventPrefix}:${channel}` : channel;
 }
 
-type IpcEmitterEventKey<TEvents extends IpcEventMap> = Extract<keyof TEvents, string>;
-
-type IpcEmitterEventArgs<
-  TEvents extends IpcEventMap,
-  TEvent extends IpcEmitterEventKey<TEvents>,
-> = TEvents[TEvent] extends readonly unknown[] ? [...TEvents[TEvent]] : never;
-
-/** Strongly-typed main-process sender for independently produced renderer events. */
-export interface IpcEmitter<TEvents extends IpcEventMap> {
-  /** Broadcast an event to every live `BrowserWindow`. */
-  emit<TEvent extends IpcEmitterEventKey<TEvents>>(
-    event: TEvent,
-    ...args: IpcEmitterEventArgs<TEvents, TEvent>
-  ): void;
-  /** Send an event only to the supplied `WebContents`. */
-  emitTo<TEvent extends IpcEmitterEventKey<TEvents>>(
-    target: WebContents,
-    event: TEvent,
-    ...args: IpcEmitterEventArgs<TEvents, TEvent>
-  ): void;
-}
-
 /**
  * Create a typed sender for events produced independently of an incoming IPC
  * call, such as timers, file watchers, or background jobs.
@@ -266,16 +246,15 @@ export interface IpcEmitter<TEvents extends IpcEventMap> {
 export function createIpcEmitter<TEvents extends IpcEventMap>(
   eventPrefix?: string,
 ): IpcEmitter<TEvents> {
-  const send = <TEvent extends IpcEmitterEventKey<TEvents>>(
-    target: WebContents,
-    event: TEvent,
-    args: IpcEmitterEventArgs<TEvents, TEvent>,
-  ) => target.send(prefixEventChannel(eventPrefix, event), ...args);
+  const send = (target: WebContents, event: string, args: readonly unknown[]) => {
+    if (target.isDestroyed()) return;
+    target.send(prefixEventChannel(eventPrefix, event), ...args);
+  };
 
   return {
     emit(event, ...args) {
       for (const window of BrowserWindow.getAllWindows()) {
-        if (!window.webContents.isDestroyed()) send(window.webContents, event, args);
+        send(window.webContents, event, args);
       }
     },
     emitTo(target, event, ...args) {
