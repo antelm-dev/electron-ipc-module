@@ -10,6 +10,42 @@ those callbacks directly. Keep one real-Electron smoke test for the boundary a
 mock cannot cover: whether the generated preload bridge and runtime agree on
 physical channel names.
 
+## Mock the `electron` module first
+
+`electron-ipc-module` imports `ipcMain` and `BrowserWindow` at module load, and
+outside an Electron process `electron` resolves to the packaged binary rather
+than the API — so a test runner needs a stub before any of the examples below
+will even import. With Vitest, put one in a setup file:
+
+```ts
+// test/setup.ts
+import { vi } from "vitest";
+
+vi.mock("electron", () => ({
+  BrowserWindow: { getAllWindows: vi.fn(() => []) },
+  ipcMain: {
+    handle: vi.fn(),
+    handleOnce: vi.fn(),
+    on: vi.fn(),
+    once: vi.fn(),
+    removeHandler: vi.fn(),
+    removeListener: vi.fn(),
+  },
+}));
+```
+
+```ts
+// vitest.config.ts
+export default defineConfig({
+  test: { environment: "node", setupFiles: ["./test/setup.ts"] },
+});
+```
+
+The stub only has to cover what a test path actually reaches. Most tests pass
+their own `ipcMain` fake to the register function and never touch the imported
+one; `createIpcEmitter().emit()` is the case that does read
+`BrowserWindow.getAllWindows()`.
+
 ## Unit-test a module through its public boundary
 
 Avoid exporting handler callbacks only for tests. The function returned by
@@ -129,7 +165,8 @@ that live windows receive the event while destroyed ones do not.
 Also test renderer listener cleanup at the component boundary. Every generated
 `on<Event>` and `once<Event>` method returns an unsubscribe function; the test
 should call it on unmount rather than relying on a later navigation to discard
-the listener.
+the listener. See [renderer patterns](./renderer-patterns.md) for the
+hooks that make that automatic.
 
 ## Test container lifecycle
 
@@ -155,12 +192,25 @@ overlapping calls, and the terminal behavior of `dispose()`.
 
 ## Keep the generated bridge current in CI
 
-Commit the generated bridge, then make staleness a CI failure:
+Commit the generated bridge, then make staleness a CI failure. Run `check` with
+exactly the options generation uses — its defaults (`./src/ipc`,
+`./src/generated/ipc-bridge.ts`, `./tsconfig.json`) rarely match a real layout,
+and a bare `check` pointed at the wrong paths proves nothing:
 
-```yaml
-- run: npx electron-ipc-module check
+```json
+{
+  "scripts": {
+    "ipc:generate": "electron-ipc-module generate --ipc-dir ./main/ipc --out-file ./main/generated/ipc-bridge.ts --tsconfig ./tsconfig.preload.json --expose ipc",
+    "ipc:check": "electron-ipc-module check --ipc-dir ./main/ipc --out-file ./main/generated/ipc-bridge.ts --tsconfig ./tsconfig.preload.json --expose ipc"
+  }
+}
 ```
 
+```yaml
+- run: npm run ipc:check
+```
+
+Keeping both in scripts is what stops local generation and CI from drifting.
 Run the application's normal type check after that command. It verifies that
 renderer calls still match the newly generated API and catches stale global
 typing or an excluded generated file.

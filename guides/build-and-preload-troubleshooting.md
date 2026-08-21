@@ -9,6 +9,9 @@ failures come from generating it in the wrong build, compiling it with the
 wrong TypeScript project, or loading an unbundled preload in Electron's
 sandbox.
 
+This guide is organized by symptom. If you have an exact error message, look it
+up in the [diagnostics reference](./diagnostics.md) instead.
+
 ## Known-good build shape
 
 1. Generate `ipc-bridge.ts` from the main-process `*.ipc.ts` files.
@@ -68,9 +71,10 @@ Verify all of the following:
   prefix and preferably a plain channel object literal.
 - The file and everything its exported channel types depend on type-check.
 
-Use a supplied `logger` when you need debug-level per-module output. Analyzer
-warnings mean part of the bridge could not be typed completely and are not
-suppressed by the CLI's `--quiet` flag.
+The built-in logger discards `debug`, so the per-module channel and event counts
+only appear when you pass your own `logger` to the plugin or the generator API —
+the CLI has no flag for it. Analyzer warnings mean part of the bridge could not
+be typed completely, and `--quiet` does not suppress them.
 
 ## Renderer types do not see the bridge
 
