@@ -42,9 +42,15 @@ export function resolveIpcBridgeOptions(options: IpcBridgeOptions = {}): Resolve
 
 /**
  * Paths a watcher should follow to know when to regenerate the bridge: the
- * tsconfig and either `ipcDir` itself, or — when `ipcDir` is a glob — its
- * nearest non-glob ancestor directory (so newly created matches are seen).
+ * tsconfig, each currently matching `*.ipc.ts` file, and either `ipcDir`
+ * itself, or — when `ipcDir` is a glob — its nearest non-glob ancestor
+ * directory (so newly created matches are seen).
  * Filter change events with {@link isIpcBridgeRelevantFile}.
+ *
+ * The individual files matter because Vite's build watcher — and therefore
+ * `electron-vite dev` — only honours `addWatchFile` for file paths, ignoring
+ * directories. The directory is still returned so raw `rollup -w` notices
+ * files added after the watcher started.
  */
 export function getIpcBridgeWatchTargets(options: IpcBridgeOptions = {}): string[] {
   const resolved = resolveIpcBridgeOptions(options);
@@ -52,7 +58,7 @@ export function getIpcBridgeWatchTargets(options: IpcBridgeOptions = {}): string
     ? globWatchRoot(resolved.ipcDir)
     : toAbsolutePosix(resolved.ipcDir);
 
-  return [resolved.tsconfig, ipcTarget];
+  return [...new Set([resolved.tsconfig, ipcTarget, ...collectIpcFilePaths(resolved.ipcDir)])];
 }
 
 /**

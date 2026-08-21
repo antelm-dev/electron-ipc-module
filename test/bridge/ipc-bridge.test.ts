@@ -72,7 +72,17 @@ describe("getIpcBridgeWatchTargets", () => {
     });
 
     expect(targets).toContain(toAbsolutePosix(FIXTURE_IPC_DIR));
-    expect(targets).not.toContain(toAbsolutePosix(DEMO_IPC_FILE));
+  });
+
+  // Vite's build watcher (and so `electron-vite dev`) ignores addWatchFile
+  // directories, so the concrete files have to be watch targets too.
+  it("watches each matching ipc file, not just the directory", () => {
+    const targets = getIpcBridgeWatchTargets({
+      ipcDir: FIXTURE_IPC_DIR,
+      tsconfig: FIXTURE_TSCONFIG,
+    });
+
+    expect(targets).toContain(toAbsolutePosix(DEMO_IPC_FILE));
   });
 });
 

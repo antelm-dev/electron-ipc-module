@@ -466,6 +466,41 @@ Configuration and compiler-option errors still abort, since those describe the p
 
 The plugin also implements Vite's compatible plugin API, so the same `electron-ipc-module/rollup-plugin` import works in a Vite config.
 
+#### Using with electron-vite
+
+Scaffold a project — the template picker covers React, Vue, Svelte, Solid, and vanilla, in JS or TS:
+
+```bash
+npm create @quick-start/electron@latest
+```
+
+Then add the plugin to the **preload** build. The bridge is a preload artifact, so putting it under `renderer` generates nothing useful:
+
+```ts
+// electron.vite.config.ts
+import { defineConfig, externalizeDepsPlugin } from "electron-vite";
+import ipcBridge from "electron-ipc-module/rollup-plugin";
+
+export default defineConfig({
+  main: { plugins: [externalizeDepsPlugin()] },
+  preload: {
+    plugins: [
+      externalizeDepsPlugin(),
+      ipcBridge({
+        ipcDir: "src/main/ipc",
+        outFile: "src/preload/generated/ipc-bridge.ts",
+        tsconfig: "tsconfig.node.json",
+      }),
+    ],
+  },
+  renderer: {/* your framework plugin */},
+});
+```
+
+Point `tsconfig` at `tsconfig.node.json`, not the root `tsconfig.json`: the scaffold's root config is a solution file with `"files": []`, so the generator would find no IPC sources to analyse.
+
+`electron-vite dev` regenerates the bridge when a `*.ipc.ts` file changes. This needs `electron-ipc-module@>=1.0.2` — earlier versions registered only the IPC _directory_ as a watch target, and Vite's build watcher ignores directories passed to `addWatchFile`, so the bridge generated once and then went stale until the next cold start. Creating a _new_ `*.ipc.ts` file is still only picked up on the next start of `dev`.
+
 ### Generator CLI
 
 The same generator can be used without Rollup:
