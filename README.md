@@ -171,7 +171,7 @@ pnpm start
 | Export                                        | Description                                                          |
 | --------------------------------------------- | -------------------------------------------------------------------- |
 | `defineIpcModule(prefix, channels, options?)` | Register a group of IPC channels                                     |
-| `createIpcEmitter<TEvents>(eventPrefix?)`     | Send typed events from independent main-process producers            |
+| `createIpcEmitter<TEvents>(source?)`          | Send typed events from independent main-process producers            |
 | `createIpcHelpers<TEmit>()`                   | Create typed `handle` / `listen` helpers                             |
 | `defineIpcEvents<TEvents>()`                  | Declare an emitted-event map for the bridge                          |
 | `defineChannel(type, fn)`                     | Extension point for wrapper authors; prefer the preset helpers       |
@@ -213,14 +213,14 @@ export const jobEvents = defineIpcEvents<JobEvents>();
 // -> bridge.jobs.onJobCompleted((jobId) => { ... })
 ```
 
-The independent producer must use the same event prefix:
+The independent producer takes its prefix from the module itself:
 
 ```ts
 // jobs-producer.ts
 import { createIpcEmitter } from "electron-ipc-module";
-import type { JobEvents } from "./jobs.ipc.js";
+import { registerJobsIpc, type JobEvents } from "./jobs.ipc.js";
 
-const jobs = createIpcEmitter<JobEvents>("jobs");
+const jobs = createIpcEmitter<JobEvents>(registerJobsIpc);
 
 setInterval(() => jobs.emit("job-completed", "nightly-report"), 60_000);
 // sends `jobs:job-completed` to every live window
@@ -230,11 +230,19 @@ jobs.emitTo(window.webContents, "job-completed", "on-demand-report");
 ```
 
 Standalone emitters do not declare bridge listeners. Export
-`defineIpcEvents<TEvents>()` from the corresponding `*.ipc.ts` module, and keep
-its configured event prefix aligned with the string passed to
-`createIpcEmitter`. Phase 1 still repeats that prefix; a module-bound emitter
-that removes this desynchronization risk remains follow-up work. Both `emit`
-and `emitTo` ignore destroyed `webContents`.
+`defineIpcEvents<TEvents>()` from the corresponding `*.ipc.ts` module so the
+bridge generates the matching `on*` / `once*` helpers.
+
+Passing the register function takes that module's own resolved `eventPrefix`,
+so renaming it cannot leave the emitter sending to a channel the bridge no
+longer listens on. A literal prefix — `createIpcEmitter<JobEvents>("jobs")` —
+still works for producers with no module to point at, but has to be kept in
+step by hand.
+
+`emit` reaches **every** window, hidden ones included, with no filtering, so do
+not broadcast payloads that only one renderer should see. Both methods ignore
+destroyed `webContents`, and `emitTo` accepts a handler's `event.sender`
+without prefixing the channel twice.
 
 **Cleanup.** `defineIpcModule` accepts an optional `ready` hook. If registration fails, already-registered channels are rolled back automatically.
 

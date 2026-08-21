@@ -19,6 +19,7 @@ import type {
   IpcListener,
   ListenerDef,
   IpcModuleCleanup,
+  IpcModuleRegister,
   IpcModuleRegistration,
   MaybePromise,
 } from "../shared/types/runtime.js";
@@ -240,15 +241,52 @@ function prefixEventChannel(eventPrefix: string | undefined, channel: string) {
 }
 
 /**
+ * Exposes the object behind a {@link wrapSendTarget} proxy.
+ *
+ * A wrapped `event.sender` already prefixes every channel it is given, and it
+ * satisfies `WebContents` structurally, so passing one to `emitTo` type-checks
+ * and then prefixes twice — `profile:profile:updated` reaches no listener.
+ * Unwrapping first keeps that call correct instead of silently misrouting it.
+ */
+const RAW_SEND_TARGET = Symbol("electron-ipc-module.rawSendTarget");
+
+/**
+ * The event prefix each `defineIpcModule` call resolved, keyed by the register
+ * function it returned.
+ *
+ * Kept beside the function rather than on it: a property would have to appear
+ * in the declared return type, and annotating that type is what would drop the
+ * optional `ipc` parameter callers rely on.
+ */
+const moduleEventPrefixes = new WeakMap<IpcModuleRegister, string>();
+
+/**
  * Create a typed sender for events produced independently of an incoming IPC
  * call, such as timers, file watchers, or background jobs.
+ *
+ * Pass the `defineIpcModule` register function to take the module's own
+ * resolved `eventPrefix`, so renaming it cannot leave the emitter sending to a
+ * channel the bridge no longer listens on. A literal string is still accepted
+ * for producers that have no module to point at.
+ *
+ * ```ts
+ * const registerProfile = defineIpcModule("profile", channels, { eventPrefix: true });
+ * const profile = createIpcEmitter<ProfileEvents>(registerProfile);
+ * ```
+ *
+ * Both methods drop the event when the target `WebContents` is already
+ * destroyed, and `emitTo` accepts a handler's `event.sender` without prefixing
+ * the channel a second time.
  */
 export function createIpcEmitter<TEvents extends IpcEventMap>(
-  eventPrefix?: string,
+  source?: string | IpcModuleRegister,
 ): IpcEmitter<TEvents> {
+  const eventPrefix = typeof source === "function" ? moduleEventPrefixes.get(source) : source;
+
   const send = (target: WebContents, event: string, args: readonly unknown[]) => {
-    if (target.isDestroyed()) return;
-    target.send(prefixEventChannel(eventPrefix, event), ...args);
+    const raw = (target as { [RAW_SEND_TARGET]?: WebContents })[RAW_SEND_TARGET] ?? target;
+    if (raw.isDestroyed()) return;
+    raw.send(prefixEventChannel(eventPrefix, event), ...args);
   };
 
   return {
@@ -267,6 +305,7 @@ function wrapSendTarget<T extends object>(target: T, eventPrefix: string | undef
   if (!eventPrefix) return target;
   return new Proxy(target, {
     get(object, property) {
+      if (property === RAW_SEND_TARGET) return object;
       if (property !== "send") {
         const value = Reflect.get(object, property, object);
         return typeof value === "function" ? value.bind(object) : value;
@@ -329,7 +368,7 @@ export function defineIpcModule<TChannels extends Record<string, ChannelDef>>(
         ? options.eventPrefix
         : undefined;
 
-  return async (ipc = ipcMain) => {
+  const register = async (ipc = ipcMain) => {
     const registered: IpcModuleRegistration["channels"][number][] = [];
 
     try {
@@ -412,6 +451,9 @@ export function defineIpcModule<TChannels extends Record<string, ChannelDef>>(
       throw error;
     }
   };
+
+  if (eventPrefix) moduleEventPrefixes.set(register, eventPrefix);
+  return register;
 }
 
 /**

@@ -54,6 +54,53 @@ describe("createIpcEmitter", () => {
     getAllWindows.mockReturnValue([]);
   });
 
+  it.each([
+    ["true", true as const, "profile:profile-updated"],
+    ["a string", "app" as const, "app:profile-updated"],
+    ["omitted", undefined, "profile-updated"],
+  ])(
+    "takes the module's own event prefix when eventPrefix is %s",
+    (_label, eventPrefix, channel) => {
+      const contents = { send: vi.fn(), isDestroyed: vi.fn(() => false) };
+      getAllWindows.mockReturnValue([{ webContents: contents }] as never);
+
+      const register = defineIpcModule("profile", { save: handle(() => 1) }, { eventPrefix });
+      createIpcEmitter<{ "profile-updated": [id: string] }>(register).emit("profile-updated", "u1");
+
+      expect(contents.send).toHaveBeenCalledWith(channel, "u1");
+    },
+  );
+
+  it("prefixes once when the target is a handler's already-prefixing sender", async () => {
+    const handlers = new Map<string, (...args: unknown[]) => unknown>();
+    const ipc = {
+      handle: vi.fn((channel, fn) => handlers.set(channel, fn)),
+      handleOnce: vi.fn(),
+      on: vi.fn(),
+      once: vi.fn(),
+      removeHandler: vi.fn(),
+      removeListener: vi.fn(),
+    };
+    const send = vi.fn();
+    const isDestroyed = vi.fn(() => false);
+    let sender: unknown;
+
+    await defineIpcModule(
+      "profile",
+      { save: handle((event) => void (sender = event.sender)) },
+      { eventPrefix: true },
+    )(ipc as never);
+    await handlers.get("profile:save")?.({ sender: { send, isDestroyed }, senderFrame: null });
+
+    createIpcEmitter<{ updated: [id: string] }>("profile").emitTo(
+      sender as never,
+      "updated",
+      "user-1",
+    );
+
+    expect(send).toHaveBeenCalledWith("profile:updated", "user-1");
+  });
+
   it("broadcasts a prefixed event to every live window and skips destroyed contents", () => {
     const first = { send: vi.fn(), isDestroyed: vi.fn(() => false) };
     const second = { send: vi.fn(), isDestroyed: vi.fn(() => false) };

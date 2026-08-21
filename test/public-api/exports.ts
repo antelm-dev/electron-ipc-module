@@ -76,6 +76,12 @@ import type { IpcMain, WebContents } from "electron";
 
 type Events = { changed: [value: string] };
 const emitter = createIpcEmitter<Events>("public");
+const moduleEmitter = createIpcEmitter<Events>(
+  defineIpcModule("public", { ping: handle(() => 1) }, { eventPrefix: true }),
+);
+moduleEmitter.emit("changed", "from-module");
+// @ts-expect-error only a prefix string or a defineIpcModule register function
+createIpcEmitter<Events>(123);
 emitter.emit("changed", "value");
 declare const webContents: WebContents;
 emitter.emitTo(webContents, "changed", "targeted");
