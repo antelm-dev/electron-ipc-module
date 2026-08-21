@@ -520,6 +520,12 @@ renderer/
 
 ## Further reading
 
+- [Testing IPC modules](./guides/testing.md) — unit-test registrations and guards, verify generated bridges in CI, and add a real-Electron smoke test
+- [Migrating from raw Electron IPC](./guides/migration-from-electron-ipc.md) — convert handlers, preload wrappers, renderer types, and emitted events incrementally
+- [Securing IPC channels](./guides/security.md) — authorize senders, validate runtime payloads, route sensitive events, and review privileged channels
+- [Build and preload troubleshooting](./guides/build-and-preload-troubleshooting.md) — diagnose preload formats, missing modules, stale output, renderer typing, and watch mode
+- [Multi-window and background-work patterns](./guides/multi-window-and-background-work.md) — scope one-shot channels, target events, report progress, and cancel work safely
+- [Module architecture and lifecycle](./guides/module-lifecycle.md) — structure modules, inject services, replace registrations, and shut down cleanly
 - [Compatibility and stability](./guides/compatibility.md) — supported versions, what CI verifies, the SemVer contract, and where the public types live
 - [Error contract](./guides/error-contract.md) — per-stage failure behavior and observer exception isolation
 - [Changelog](./CHANGELOG.md)
