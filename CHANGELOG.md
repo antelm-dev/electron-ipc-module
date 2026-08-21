@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.1.0](https://github.com/antelm-dev/electron-ipc-module/compare/v1.0.1...v1.1.0) (2026-08-21)
+
+
+### Features
+
+* add invoke lifecycle abort signal ([#77](https://github.com/antelm-dev/electron-ipc-module/issues/77)) ([cd29ff3](https://github.com/antelm-dev/electron-ipc-module/commit/cd29ff3027861ee4416dd7dfa600d9bd5eaf2673))
+* add safe typed standalone IPC emitter ([#78](https://github.com/antelm-dev/electron-ipc-module/issues/78)) ([29a96f1](https://github.com/antelm-dev/electron-ipc-module/commit/29a96f10a0eb203549e0d7e506c096bf16fdb9ca))
+* **generator:** add expose option for contextBridge and window typing ([#74](https://github.com/antelm-dev/electron-ipc-module/issues/74)) ([d77076c](https://github.com/antelm-dev/electron-ipc-module/commit/d77076c5ab706268ad4533840a3064e719635489))
+
 ## [1.0.1](https://github.com/antelm-dev/electron-ipc-module/compare/v1.0.0...v1.0.1) (2026-08-11)
 
 
