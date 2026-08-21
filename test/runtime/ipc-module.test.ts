@@ -86,8 +86,20 @@ describe("createIpcEmitter", () => {
     expect(contents.send).toHaveBeenCalledWith("profile-updated", "user-1");
   });
 
+  it("drops the event when the explicit target is already destroyed", () => {
+    const target = { send: vi.fn(), isDestroyed: vi.fn(() => true) };
+
+    createIpcEmitter<{ completed: [jobId: number] }>("jobs").emitTo(
+      target as never,
+      "completed",
+      1,
+    );
+
+    expect(target.send).not.toHaveBeenCalled();
+  });
+
   it("sends only to the explicit target without enumerating windows", () => {
-    const target = { send: vi.fn() };
+    const target = { send: vi.fn(), isDestroyed: vi.fn(() => false) };
     const other = { send: vi.fn(), isDestroyed: vi.fn(() => false) };
     getAllWindows.mockReturnValue([{ webContents: other }] as never);
 

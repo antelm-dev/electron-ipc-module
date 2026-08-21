@@ -177,6 +177,18 @@ export type TypedWebFrameMain<TEmit extends IpcEventMap = AnyIpcEventMap> = Omit
   send<TKey extends IpcEventKey<TEmit>>(channel: TKey, ...args: IpcEventArgs<TEmit, TKey>): void;
 };
 
+/** Strongly-typed main-process sender for independently produced renderer events. */
+export interface IpcEmitter<TEvents extends IpcEventMap> {
+  /** Broadcast an event to every live `BrowserWindow`. */
+  emit<TKey extends IpcEventKey<TEvents>>(event: TKey, ...args: IpcEventArgs<TEvents, TKey>): void;
+  /** Send an event only to the supplied `WebContents`. */
+  emitTo<TKey extends IpcEventKey<TEvents>>(
+    target: WebContents,
+    event: TKey,
+    ...args: IpcEventArgs<TEvents, TKey>
+  ): void;
+}
+
 /** `IpcMainEvent` (for `listen`/`listenOnce`) with typed `reply`/`sender`. */
 export type TypedIpcMainEvent<TEmit extends IpcEventMap = AnyIpcEventMap> = Omit<
   IpcMainEvent,

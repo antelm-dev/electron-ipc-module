@@ -13,6 +13,7 @@ import type {
   ChannelType,
   CloneableChannel,
   HandlerDef,
+  IpcEmitter,
   IpcEventMap,
   IpcHandler,
   IpcListener,
@@ -23,6 +24,7 @@ import type {
 } from "../shared/types/runtime.js";
 
 export type {
+  IpcEmitter,
   IpcEventMap,
   TypedWebContents,
   TypedWebFrameMain,
@@ -237,46 +239,27 @@ function prefixEventChannel(eventPrefix: string | undefined, channel: string) {
   return eventPrefix ? `${eventPrefix}:${channel}` : channel;
 }
 
-type IpcEmitterEventKey<TEvents extends IpcEventMap> = Extract<keyof TEvents, string>;
-
-type IpcEmitterEventArgs<
-  TEvents extends IpcEventMap,
-  TEvent extends IpcEmitterEventKey<TEvents>,
-> = TEvents[TEvent] extends readonly unknown[] ? [...TEvents[TEvent]] : never;
-
-/** Strongly-typed main-process sender for independently produced renderer events. */
-export interface IpcEmitter<TEvents extends IpcEventMap> {
-  /** Broadcast an event to every live `BrowserWindow`. */
-  emit<TEvent extends IpcEmitterEventKey<TEvents>>(
-    event: TEvent,
-    ...args: IpcEmitterEventArgs<TEvents, TEvent>
-  ): void;
-  /** Send an event only to the supplied `WebContents`. */
-  emitTo<TEvent extends IpcEmitterEventKey<TEvents>>(
-    target: WebContents,
-    event: TEvent,
-    ...args: IpcEmitterEventArgs<TEvents, TEvent>
-  ): void;
-}
-
 /**
  * Create a typed sender for events produced independently of an incoming IPC
  * call, such as timers, file watchers, or background jobs.
+ *
+ * `emit` reaches every window, including hidden ones and any loading untrusted
+ * content; there is no per-window filtering. Both methods drop the event when
+ * the target `WebContents` is already destroyed, so a producer outliving its
+ * window is not an error.
  */
 export function createIpcEmitter<TEvents extends IpcEventMap>(
   eventPrefix?: string,
 ): IpcEmitter<TEvents> {
-  const send = <TEvent extends IpcEmitterEventKey<TEvents>>(
-    target: WebContents,
-    event: TEvent,
-    args: IpcEmitterEventArgs<TEvents, TEvent>,
-  ) => target.send(prefixEventChannel(eventPrefix, event), ...args);
+  // `send` on destroyed contents throws, and a producer detached from window
+  // lifetimes is exactly the caller that holds a stale reference.
+  const send = (target: WebContents, event: string, args: readonly unknown[]) => {
+    if (!target.isDestroyed()) target.send(prefixEventChannel(eventPrefix, event), ...args);
+  };
 
   return {
     emit(event, ...args) {
-      for (const window of BrowserWindow.getAllWindows()) {
-        if (!window.webContents.isDestroyed()) send(window.webContents, event, args);
-      }
+      for (const window of BrowserWindow.getAllWindows()) send(window.webContents, event, args);
     },
     emitTo(target, event, ...args) {
       send(target, event, args);

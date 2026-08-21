@@ -197,14 +197,24 @@ export const statusEvents = defineIpcEvents<StatusEvents>();
 ```
 
 For timers, jobs, file watchers, and other producers that run independently of
-an incoming IPC call, create a standalone emitter. `emit` broadcasts to every
-current window and ignores destroyed `webContents`:
+an incoming IPC call, create a standalone emitter. It sends on the same channels
+the bridge already listens on, so the events must still be declared in the
+module — the emitter provides the send side, not the renderer API:
 
 ```ts
+// jobs.ipc.ts
+type JobEvents = { "job-completed": [jobId: string] };
+
+export const jobEvents = defineIpcEvents<JobEvents>();
+export const registerJobs = defineIpcModule("jobs", channels, { eventPrefix: true });
+// -> bridge.jobs.onJobCompleted((jobId) => { ... })
+```
+
+```ts
+// anywhere in the main process
 import { createIpcEmitter } from "electron-ipc-module";
 
-type JobEvents = { "job-completed": [jobId: string] };
-const jobs = createIpcEmitter<JobEvents>("jobs");
+const jobs = createIpcEmitter<JobEvents>("jobs"); // must match `eventPrefix`
 
 setInterval(() => jobs.emit("job-completed", "nightly-report"), 60_000);
 // sends `jobs:job-completed` to every live window
@@ -215,6 +225,10 @@ Use `emitTo` when only one renderer should receive the event:
 ```ts
 jobs.emitTo(window.webContents, "job-completed", "on-demand-report");
 ```
+
+`emit` reaches **every** window — hidden ones included — with no filtering, so
+do not broadcast payloads that only one renderer should see. Both methods drop
+the event when the target `webContents` is already destroyed.
 
 **Cleanup.** `defineIpcModule` accepts an optional `ready` hook. If registration fails, already-registered channels are rolled back automatically.
 
