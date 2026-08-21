@@ -60,7 +60,8 @@ the module changes.
 `emit()` broadcasts to every live `BrowserWindow`, including hidden windows.
 Reserve it for truly application-wide state such as a theme or connectivity
 change. Use `emitTo()` for document, account, tenant, or user-specific data.
-Destroyed targets are ignored.
+Destroyed targets are ignored. See [securing IPC channels](./security.md) for
+why targeting is a confidentiality decision, not just a routing one.
 
 ## Clean up renderer subscriptions
 
@@ -163,5 +164,6 @@ defineIpcModule("jobs", channels, {
 ```
 
 Cleanup runs when the module is unloaded, replaced, or disposed through its
-container. Producers owned outside a module should have an equally explicit
-application shutdown owner.
+container — see [module architecture and lifecycle](./module-lifecycle.md).
+Producers owned outside a module should have an equally explicit application
+shutdown owner.

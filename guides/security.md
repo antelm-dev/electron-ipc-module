@@ -40,15 +40,18 @@ Bundle a sandboxed preload to one self-contained CommonJS file and keep
 Use `authorize` for rules shared by a module:
 
 ```ts
+// Channel keys this module accepts only from the trusted application frame.
+const privilegedChannels = new Set(["read", "write"]);
+
 const registerFilesIpc = defineIpcModule("files", channels, {
   authorize: (event, context) => {
+    if (!privilegedChannels.has(context.key)) return true;
+
     const url = event.senderFrame?.url;
     if (!url) return false;
 
     const source = new URL(url);
-    return (
-      source.protocol === "app:" && source.hostname === "local" && allowedChannels.has(context.key)
-    );
+    return source.protocol === "app:" && source.hostname === "local";
   },
 });
 ```

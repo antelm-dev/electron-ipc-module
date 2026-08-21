@@ -128,9 +128,14 @@ Events from jobs, timers, or file watchers can move to `createIpcEmitter`.
 Pass the module register function so it inherits the same `eventPrefix`:
 
 ```ts
-const profileEvents = createIpcEmitter<ProfileEvents>(registerProfileIpc);
-profileEvents.emitTo(window.webContents, "updated", profile);
+const profileEmitter = createIpcEmitter<ProfileEvents>(registerProfileIpc);
+profileEmitter.emitTo(window.webContents, "updated", profile);
 ```
+
+`createIpcHelpers<ProfileEvents>()` already tells the generator about the event
+map, so the `defineIpcEvents` export above is only needed for a module that
+emits events without binding helpers to them. Declaring both is harmless —
+duplicate event names are collapsed.
 
 ## Add runtime guards during migration
 
