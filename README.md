@@ -171,6 +171,7 @@ pnpm start
 | Export                                        | Description                                                          |
 | --------------------------------------------- | -------------------------------------------------------------------- |
 | `defineIpcModule(prefix, channels, options?)` | Register a group of IPC channels                                     |
+| `createIpcEmitter<TEvents>(eventPrefix?)`     | Send typed events from independent main-process producers            |
 | `createIpcHelpers<TEmit>()`                   | Create typed `handle` / `listen` helpers                             |
 | `defineIpcEvents<TEvents>()`                  | Declare an emitted-event map for the bridge                          |
 | `defineChannel(type, fn)`                     | Extension point for wrapper authors; prefer the preset helpers       |
@@ -193,6 +194,26 @@ Alternatively, declare an event map with `defineIpcEvents<TEvents>()` and export
 type StatusEvents = { "status-changed": [online: boolean] };
 export const statusEvents = defineIpcEvents<StatusEvents>();
 // -> bridge.status.onStatusChanged((online) => { ... })
+```
+
+For timers, jobs, file watchers, and other producers that run independently of
+an incoming IPC call, create a standalone emitter. `emit` broadcasts to every
+current window and ignores destroyed `webContents`:
+
+```ts
+import { createIpcEmitter } from "electron-ipc-module";
+
+type JobEvents = { "job-completed": [jobId: string] };
+const jobs = createIpcEmitter<JobEvents>("jobs");
+
+setInterval(() => jobs.emit("job-completed", "nightly-report"), 60_000);
+// sends `jobs:job-completed` to every live window
+```
+
+Use `emitTo` when only one renderer should receive the event:
+
+```ts
+jobs.emitTo(window.webContents, "job-completed", "on-demand-report");
 ```
 
 **Cleanup.** `defineIpcModule` accepts an optional `ready` hook. If registration fails, already-registered channels are rolled back automatically.

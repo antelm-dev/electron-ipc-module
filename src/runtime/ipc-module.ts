@@ -1,5 +1,12 @@
 import type { StandardSchemaV1 } from "@standard-schema/spec";
-import { ipcMain, type IpcMain, type IpcMainEvent, type IpcMainInvokeEvent } from "electron";
+import {
+  BrowserWindow,
+  ipcMain,
+  type IpcMain,
+  type IpcMainEvent,
+  type IpcMainInvokeEvent,
+  type WebContents,
+} from "electron";
 
 import type {
   ChannelDef,
@@ -228,6 +235,53 @@ function settleListener(result: unknown, onError: (error: unknown) => void): voi
 
 function prefixEventChannel(eventPrefix: string | undefined, channel: string) {
   return eventPrefix ? `${eventPrefix}:${channel}` : channel;
+}
+
+type IpcEmitterEventKey<TEvents extends IpcEventMap> = Extract<keyof TEvents, string>;
+
+type IpcEmitterEventArgs<
+  TEvents extends IpcEventMap,
+  TEvent extends IpcEmitterEventKey<TEvents>,
+> = TEvents[TEvent] extends readonly unknown[] ? [...TEvents[TEvent]] : never;
+
+/** Strongly-typed main-process sender for independently produced renderer events. */
+export interface IpcEmitter<TEvents extends IpcEventMap> {
+  /** Broadcast an event to every live `BrowserWindow`. */
+  emit<TEvent extends IpcEmitterEventKey<TEvents>>(
+    event: TEvent,
+    ...args: IpcEmitterEventArgs<TEvents, TEvent>
+  ): void;
+  /** Send an event only to the supplied `WebContents`. */
+  emitTo<TEvent extends IpcEmitterEventKey<TEvents>>(
+    target: WebContents,
+    event: TEvent,
+    ...args: IpcEmitterEventArgs<TEvents, TEvent>
+  ): void;
+}
+
+/**
+ * Create a typed sender for events produced independently of an incoming IPC
+ * call, such as timers, file watchers, or background jobs.
+ */
+export function createIpcEmitter<TEvents extends IpcEventMap>(
+  eventPrefix?: string,
+): IpcEmitter<TEvents> {
+  const send = <TEvent extends IpcEmitterEventKey<TEvents>>(
+    target: WebContents,
+    event: TEvent,
+    args: IpcEmitterEventArgs<TEvents, TEvent>,
+  ) => target.send(prefixEventChannel(eventPrefix, event), ...args);
+
+  return {
+    emit(event, ...args) {
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (!window.webContents.isDestroyed()) send(window.webContents, event, args);
+      }
+    },
+    emitTo(target, event, ...args) {
+      send(target, event, args);
+    },
+  };
 }
 
 function wrapSendTarget<T extends object>(target: T, eventPrefix: string | undefined): T {
