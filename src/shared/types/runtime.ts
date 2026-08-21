@@ -161,6 +161,21 @@ type IpcEventArgs<
   TKey extends IpcEventKey<TEmit>,
 > = TEmit[TKey] extends readonly unknown[] ? [...TEmit[TKey]] : never;
 
+/** Strongly-typed main-process sender for independently produced renderer events. */
+export interface IpcEmitter<TEvents extends IpcEventMap> {
+  /** Broadcast an event to every live `BrowserWindow`. */
+  emit<TEvent extends IpcEventKey<TEvents>>(
+    event: TEvent,
+    ...args: IpcEventArgs<TEvents, TEvent>
+  ): void;
+  /** Send an event only to the supplied `WebContents`. */
+  emitTo<TEvent extends IpcEventKey<TEvents>>(
+    target: WebContents,
+    event: TEvent,
+    ...args: IpcEventArgs<TEvents, TEvent>
+  ): void;
+}
+
 /** `WebContents` whose `send` is typed against the module's event map. */
 export type TypedWebContents<TEmit extends IpcEventMap = AnyIpcEventMap> = Omit<
   WebContents,

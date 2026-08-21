@@ -171,6 +171,7 @@ pnpm start
 | Export                                        | Description                                                          |
 | --------------------------------------------- | -------------------------------------------------------------------- |
 | `defineIpcModule(prefix, channels, options?)` | Register a group of IPC channels                                     |
+| `createIpcEmitter<TEvents>(source?)`          | Send typed events from independent main-process producers            |
 | `createIpcHelpers<TEmit>()`                   | Create typed `handle` / `listen` helpers                             |
 | `defineIpcEvents<TEvents>()`                  | Declare an emitted-event map for the bridge                          |
 | `defineChannel(type, fn)`                     | Extension point for wrapper authors; prefer the preset helpers       |
@@ -194,6 +195,54 @@ type StatusEvents = { "status-changed": [online: boolean] };
 export const statusEvents = defineIpcEvents<StatusEvents>();
 // -> bridge.status.onStatusChanged((online) => { ... })
 ```
+
+For timers, jobs, file watchers, and other producers that run independently of
+an incoming IPC call, pair a module event declaration with a standalone
+emitter. The module declaration is what lets bridge generation create the
+renderer listener:
+
+```ts
+// jobs.ipc.ts
+import { defineIpcEvents, defineIpcModule } from "electron-ipc-module";
+
+export type JobEvents = { "job-completed": [jobId: string] };
+const channels = {};
+
+export const registerJobsIpc = defineIpcModule("jobs", channels, { eventPrefix: true });
+export const jobEvents = defineIpcEvents<JobEvents>();
+// -> bridge.jobs.onJobCompleted((jobId) => { ... })
+```
+
+The independent producer takes its prefix from the module itself:
+
+```ts
+// jobs-producer.ts
+import { createIpcEmitter } from "electron-ipc-module";
+import { registerJobsIpc, type JobEvents } from "./jobs.ipc.js";
+
+const jobs = createIpcEmitter<JobEvents>(registerJobsIpc);
+
+setInterval(() => jobs.emit("job-completed", "nightly-report"), 60_000);
+// sends `jobs:job-completed` to every live window
+
+// Send only to one renderer.
+jobs.emitTo(window.webContents, "job-completed", "on-demand-report");
+```
+
+Standalone emitters do not declare bridge listeners. Export
+`defineIpcEvents<TEvents>()` from the corresponding `*.ipc.ts` module so the
+bridge generates the matching `on*` / `once*` helpers.
+
+Passing the register function takes that module's own resolved `eventPrefix`,
+so renaming it cannot leave the emitter sending to a channel the bridge no
+longer listens on. A literal prefix — `createIpcEmitter<JobEvents>("jobs")` —
+still works for producers with no module to point at, but has to be kept in
+step by hand.
+
+`emit` reaches **every** window, hidden ones included, with no filtering, so do
+not broadcast payloads that only one renderer should see. Both methods ignore
+destroyed `webContents`, and `emitTo` accepts a handler's `event.sender`
+without prefixing the channel twice.
 
 **Cleanup.** `defineIpcModule` accepts an optional `ready` hook. If registration fails, already-registered channels are rolled back automatically.
 

@@ -2,6 +2,7 @@ import type { StandardSchemaV1 } from "@standard-schema/spec";
 import { EventEmitter } from "node:events";
 
 import {
+  createIpcEmitter,
   defineIpcEvents,
   defineIpcModule,
   handle,
@@ -11,7 +12,8 @@ import {
   IpcAuthorizationError,
   IpcValidationError,
 } from "../../src/runtime/ipc-module.js";
-import { vi, describe, it, expect } from "vitest";
+import { BrowserWindow } from "electron";
+import { beforeEach, vi, describe, it, expect } from "vitest";
 
 /**
  * A minimal Standard Schema, so the contract is exercised without pulling in
@@ -59,6 +61,125 @@ const createInvokeSender = () => {
 };
 
 const createInvokeEvent = (sender = createInvokeSender()) => ({ sender, senderFrame: null });
+
+describe("createIpcEmitter", () => {
+  const getAllWindows = vi.mocked(BrowserWindow.getAllWindows);
+
+  beforeEach(() => {
+    getAllWindows.mockReset();
+    getAllWindows.mockReturnValue([]);
+  });
+
+  it.each([
+    ["true", true as const, "profile:profile-updated"],
+    ["a string", "app" as const, "app:profile-updated"],
+    ["omitted", undefined, "profile-updated"],
+  ])(
+    "takes the module's own event prefix when eventPrefix is %s",
+    (_label, eventPrefix, channel) => {
+      const contents = { send: vi.fn(), isDestroyed: vi.fn(() => false) };
+      getAllWindows.mockReturnValue([{ webContents: contents }] as never);
+
+      const register = defineIpcModule("profile", { save: handle(() => 1) }, { eventPrefix });
+      createIpcEmitter<{ "profile-updated": [id: string] }>(register).emit("profile-updated", "u1");
+
+      expect(contents.send).toHaveBeenCalledWith(channel, "u1");
+    },
+  );
+
+  it("prefixes once when the target is a handler's already-prefixing sender", async () => {
+    const handlers = new Map<string, (...args: unknown[]) => unknown>();
+    const ipc = {
+      handle: vi.fn((channel, fn) => handlers.set(channel, fn)),
+      handleOnce: vi.fn(),
+      on: vi.fn(),
+      once: vi.fn(),
+      removeHandler: vi.fn(),
+      removeListener: vi.fn(),
+    };
+    const send = vi.fn();
+    const isDestroyed = vi.fn(() => false);
+    let sender: unknown;
+
+    await defineIpcModule(
+      "profile",
+      { save: handle((event) => void (sender = event.sender)) },
+      { eventPrefix: true },
+    )(ipc as never);
+    await handlers.get("profile:save")?.({ sender: { send, isDestroyed }, senderFrame: null });
+
+    createIpcEmitter<{ updated: [id: string] }>("profile").emitTo(
+      sender as never,
+      "updated",
+      "user-1",
+    );
+
+    expect(send).toHaveBeenCalledWith("profile:updated", "user-1");
+  });
+
+  it("broadcasts a prefixed event to every live window and skips destroyed contents", () => {
+    const first = { send: vi.fn(), isDestroyed: vi.fn(() => false) };
+    const second = { send: vi.fn(), isDestroyed: vi.fn(() => false) };
+    const destroyed = { send: vi.fn(), isDestroyed: vi.fn(() => true) };
+    getAllWindows.mockReturnValue([
+      { webContents: first },
+      { webContents: destroyed },
+      { webContents: second },
+    ] as never);
+
+    const emitter = createIpcEmitter<{ "profile-updated": [id: string, active: boolean] }>(
+      "profile",
+    );
+    const result = emitter.emit("profile-updated", "user-1", true);
+
+    expect(result).toBeUndefined();
+    expect(first.send).toHaveBeenCalledOnce();
+    expect(first.send).toHaveBeenCalledWith("profile:profile-updated", "user-1", true);
+    expect(second.send).toHaveBeenCalledOnce();
+    expect(second.send).toHaveBeenCalledWith("profile:profile-updated", "user-1", true);
+    expect(destroyed.send).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined, ""])("leaves the event channel unchanged for prefix %j", (prefix) => {
+    const contents = { send: vi.fn(), isDestroyed: vi.fn(() => false) };
+    getAllWindows.mockReturnValue([{ webContents: contents }] as never);
+
+    createIpcEmitter<{ "profile-updated": [id: string] }>(prefix).emit("profile-updated", "user-1");
+
+    expect(contents.send).toHaveBeenCalledWith("profile-updated", "user-1");
+  });
+
+  it("sends only to the explicit target without enumerating windows", () => {
+    const target = { send: vi.fn(), isDestroyed: vi.fn(() => false) };
+    const other = { send: vi.fn(), isDestroyed: vi.fn(() => false) };
+    getAllWindows.mockReturnValue([{ webContents: other }] as never);
+
+    const result = createIpcEmitter<{ completed: [jobId: number] }>("jobs").emitTo(
+      target as never,
+      "completed",
+      42,
+    );
+
+    expect(result).toBeUndefined();
+    expect(target.send).toHaveBeenCalledOnce();
+    expect(target.send).toHaveBeenCalledWith("jobs:completed", 42);
+    expect(getAllWindows).not.toHaveBeenCalled();
+    expect(other.send).not.toHaveBeenCalled();
+  });
+
+  it("does not send to a destroyed explicit target", () => {
+    const target = { send: vi.fn(), isDestroyed: vi.fn(() => true) };
+
+    createIpcEmitter<{ completed: [jobId: number] }>("jobs").emitTo(
+      target as never,
+      "completed",
+      42,
+    );
+
+    expect(target.send).not.toHaveBeenCalled();
+    expect(getAllWindows).not.toHaveBeenCalled();
+  });
+});
 
 describe("defineIpcModule", () => {
   it("registers channels and exposes cleanup callbacks", async () => {

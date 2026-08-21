@@ -1,5 +1,6 @@
 import {
   createIpcContainer,
+  createIpcEmitter,
   createIpcHelpers,
   defineChannel,
   defineIpcEvents,
@@ -25,6 +26,7 @@ import {
   type IpcContainerEmitter,
   type IpcContainerEvents,
   type IpcEventMap,
+  type IpcEmitter,
   type IpcHandler,
   type IpcListener,
   type IpcModuleCleanup,
@@ -70,9 +72,25 @@ import type { IpcBridgeOptions as _MovedIpcBridgeOptions } from "electron-ipc-mo
 import type { ResolvedIpcBridgeOptions as _MovedResolvedOptions } from "electron-ipc-module";
 
 import type { StandardSchemaV1 } from "@standard-schema/spec";
-import type { IpcMain } from "electron";
+import type { IpcMain, WebContents } from "electron";
 
 type Events = { changed: [value: string] };
+const emitter = createIpcEmitter<Events>("public");
+const moduleEmitter = createIpcEmitter<Events>(
+  defineIpcModule("public", { ping: handle(() => 1) }, { eventPrefix: true }),
+);
+moduleEmitter.emit("changed", "from-module");
+// @ts-expect-error only a prefix string or a defineIpcModule register function
+createIpcEmitter<Events>(123);
+emitter.emit("changed", "value");
+declare const webContents: WebContents;
+emitter.emitTo(webContents, "changed", "targeted");
+// @ts-expect-error event keys must be declared in the event map
+emitter.emit("missing", "value");
+// @ts-expect-error the declared payload is required
+emitter.emit("changed");
+// @ts-expect-error payload types must match the declared tuple
+emitter.emit("changed", 123);
 const helpers = createIpcHelpers<Events>();
 const handler = helpers.handle<[value: string], number>((event, value) => {
   const active: boolean = !event.signal.aborted;
@@ -150,6 +168,7 @@ type PublicTypes = [
   IpcContainerEmitter,
   IpcContainerEvents,
   IpcEventMap,
+  IpcEmitter<Events>,
   IpcHandler,
   IpcListener,
   IpcUncloneable<string>,
