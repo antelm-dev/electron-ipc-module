@@ -23,6 +23,7 @@ Options:
   --ipc-dir <path>  IPC source directory or glob
   --out-file <path> Generated TypeScript file
   --tsconfig <path> TypeScript configuration
+  --expose <name>   Also expose the bridge as window.<name> from the preload
   --watch           Keep watching after generation
   --quiet           Suppress progress output; warnings and errors still print
   --help            Show this help
@@ -44,6 +45,7 @@ function parseArguments(args: string[]) {
     if (flag === "--ipc-dir") options.ipcDir = takeValue(args, index++, flag);
     else if (flag === "--out-file") options.outFile = takeValue(args, index++, flag);
     else if (flag === "--tsconfig") options.tsconfig = takeValue(args, index++, flag);
+    else if (flag === "--expose") options.expose = takeValue(args, index++, flag);
     else if (flag === "--watch") watchMode = true;
     else if (flag === "--quiet") options.logger = createLogger("ipc-bridge", true);
     else if (flag === "--help" || flag === "-h") return { command: "help", options, watchMode };

@@ -36,6 +36,7 @@ export function resolveIpcBridgeOptions(options: IpcBridgeOptions = {}): Resolve
     outFile: toAbsolutePosix(options.outFile ?? DEFAULT_OUT_FILE),
     tsconfig: toAbsolutePosix(options.tsconfig ?? DEFAULT_TSCONFIG),
     logger: options.logger ?? createLogger("ipc-bridge"),
+    expose: options.expose,
   };
 }
 
@@ -108,7 +109,7 @@ export function runIpcBridgeGeneration(
     );
   }
 
-  let code = generateBridge(modules);
+  let code = generateBridge(modules, { expose: resolved.expose });
   code = makeRelativeImports(code, resolved.outFile);
 
   const previousCode = (() => {

@@ -86,6 +86,17 @@ describe("runCli", () => {
     expect(process.exitCode).toBeUndefined();
   });
 
+  it("--expose generates the contextBridge wiring", () => {
+    runCli([...baseArgs("generate"), "--expose", "ipc"]);
+
+    const generated = readFileSync(outFile, "utf-8");
+    expect(generated).toContain('contextBridge.exposeInMainWorld("ipc", bridge);');
+
+    // check must see the same option, or the committed bridge reads as stale.
+    runCli([...baseArgs("check"), "--expose", "ipc"]);
+    expect(process.exitCode).toBeUndefined();
+  });
+
   it("prints help without generating", () => {
     const info = vi.spyOn(console, "info").mockImplementation(() => {});
 
@@ -132,6 +143,7 @@ describe("runCli", () => {
     expect(() => runCli(["generate", "--out-file", "--watch"])).toThrow(
       "--out-file requires a value",
     );
+    expect(() => runCli(["generate", "--expose"])).toThrow("--expose requires a value");
     expect(() => runCli([...baseArgs("check"), "--watch"])).toThrow(
       "check does not support --watch",
     );

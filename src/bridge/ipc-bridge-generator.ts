@@ -1,7 +1,74 @@
+import { resolve } from "node:path";
+
+import ts from "typescript";
+
 import type { AnalyzedIpcModule, ChannelInfo, EmittedEventInfo } from "../shared/types/bridge.js";
 import { toCamelCase, toPascalCase } from "../shared/utils.js";
 
 const IDENTIFIER_PATTERN = /^[$A-Z_a-z][$\w]*$/;
+
+/**
+ * The standard globals an `expose` key cannot reuse. Derive these from the
+ * consumer's installed TypeScript rather than freezing one DOM version's
+ * `Window` members into this package. `globalThis` also includes ECMAScript
+ * globals (`Array`, `undefined`, …) that Electron refuses to overwrite.
+ */
+let standardGlobalKeys: ReadonlySet<string> | undefined;
+
+function getStandardGlobalKeys(): ReadonlySet<string> {
+  if (standardGlobalKeys) return standardGlobalKeys;
+
+  const probeFile = resolve(ts.sys.getCurrentDirectory(), "__electron_ipc_module_globals__.ts");
+  const probeSource = ts.createSourceFile(
+    probeFile,
+    "globalThis;",
+    ts.ScriptTarget.ES2022,
+    true,
+    ts.ScriptKind.TS,
+  );
+  const compilerOptions: ts.CompilerOptions = {
+    lib: ["lib.es2022.d.ts", "lib.dom.d.ts"],
+    noEmit: true,
+    target: ts.ScriptTarget.ES2022,
+  };
+  const host = ts.createCompilerHost(compilerOptions);
+  const getSourceFile = host.getSourceFile.bind(host);
+  host.getSourceFile = (fileName, languageVersion, onError, shouldCreateNewSourceFile) =>
+    fileName === probeFile
+      ? probeSource
+      : getSourceFile(fileName, languageVersion, onError, shouldCreateNewSourceFile);
+
+  const program = ts.createProgram([probeFile], compilerOptions, host);
+  const checker = program.getTypeChecker();
+  const statement = probeSource.statements[0];
+  if (!statement || !ts.isExpressionStatement(statement)) {
+    throw new Error("Failed to inspect TypeScript's standard global declarations");
+  }
+
+  const keys = new Set(
+    checker
+      .getPropertiesOfType(checker.getTypeAtLocation(statement.expression))
+      .map(({ name }) => name),
+  );
+  const windowSymbol = checker
+    .getSymbolsInScope(probeSource, ts.SymbolFlags.Interface)
+    .find(({ name }) => name === "Window");
+  if (!windowSymbol) {
+    throw new Error("Failed to inspect TypeScript's Window declarations");
+  }
+  for (const { name } of checker.getPropertiesOfType(
+    checker.getDeclaredTypeOfSymbol(windowSymbol),
+  )) {
+    keys.add(name);
+  }
+  // V8's `Has` check also follows `Window`'s prototype chain. TypeScript's
+  // `globalThis` type omits a few Object-prototype members such as
+  // `constructor`, so include that final standard layer explicitly.
+  for (const key of Object.getOwnPropertyNames(Object.prototype)) keys.add(key);
+
+  standardGlobalKeys = keys;
+  return keys;
+}
 
 function assertIdentifier(identifier: string, description: string) {
   if (!IDENTIFIER_PATTERN.test(identifier)) {
@@ -37,8 +104,37 @@ function serializable(typeStr: string) {
 }
 
 /** The runtime `electron` import line. */
-function generateImportLine() {
-  return `import { ipcRenderer } from 'electron';`;
+function generateImportLine(expose: string | undefined) {
+  const imports = expose === undefined ? "ipcRenderer" : "contextBridge, ipcRenderer";
+  return `import { ${imports} } from 'electron';`;
+}
+
+/**
+ * The `contextBridge` call and the `Window` member that describes it.
+ *
+ * Both are emitted from the same key so the exposed name and the type the
+ * renderer sees cannot disagree: hand-written, that mismatch type-checks and
+ * then leaves `window.<key>` undefined at runtime.
+ */
+function generateExposeLines(expose: string) {
+  assertIdentifier(expose, "expose option");
+  if (getStandardGlobalKeys().has(expose)) {
+    throw new Error(
+      `expose option ${JSON.stringify(expose)} is already a standard global property, which ` +
+        `Electron cannot overwrite and TypeScript cannot safely redeclare. ` +
+        `Pick a key of your own, such as "ipc".`,
+    );
+  }
+  return [
+    "",
+    `contextBridge.exposeInMainWorld(${JSON.stringify(expose)}, bridge);`,
+    "",
+    "declare global {",
+    "  interface Window {",
+    `    ${expose}: typeof bridge;`,
+    "  }",
+    "}",
+  ];
 }
 
 /** Type-only import of `Serializable`, erased at build time. */
@@ -138,9 +234,10 @@ function generateModuleEntry(ipcModule: AnalyzedIpcModule) {
 
 /**
  * Render the full `ipc-bridge.ts` source: the `electron` import, shared event
- * helpers (when needed), and a `bridge` object with one entry per module.
+ * helpers (when needed), a `bridge` object with one entry per module, and —
+ * with `expose` — the `contextBridge` call and `Window` declaration for it.
  */
-export function generateBridge(modules: AnalyzedIpcModule[]) {
+export function generateBridge(modules: AnalyzedIpcModule[], options: { expose?: string } = {}) {
   assertUniqueIdentifiers(
     modules.map((ipcModule) => [
       toCamelCase(ipcModule.name),
@@ -149,7 +246,7 @@ export function generateBridge(modules: AnalyzedIpcModule[]) {
     "IPC bridge",
   );
   const hasEmittedEvents = modules.some((ipcModule) => ipcModule.emittedEvents.length > 0);
-  const lines = [generateImportLine(), generateSerializableImportLine(), ""];
+  const lines = [generateImportLine(options.expose), generateSerializableImportLine(), ""];
 
   if (hasEmittedEvents) {
     lines.push(...generateEventHelpers());
@@ -157,7 +254,11 @@ export function generateBridge(modules: AnalyzedIpcModule[]) {
 
   const moduleEntries = modules.map(generateModuleEntry);
 
-  lines.push(`export const bridge = {\n${moduleEntries.join(",\n")},\n} as const;`, "");
+  lines.push(`export const bridge = {\n${moduleEntries.join(",\n")},\n} as const;`);
+  // Not a truthiness check: `expose: ""` is an invalid key to report, not a
+  // quiet opt-out of the exposure it asked for.
+  if (options.expose !== undefined) lines.push(...generateExposeLines(options.expose));
+  lines.push("");
 
   return lines.join("\n");
 }
