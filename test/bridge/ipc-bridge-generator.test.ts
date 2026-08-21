@@ -201,9 +201,12 @@ describe("generateBridge", () => {
     ).toThrow("expose option produces invalid bridge identifier");
   });
 
-  it("rejects an expose key Window already defines", () => {
-    expect(() =>
-      generateBridge([moduleFixture({ name: "profile", channels: [] })], { expose: "name" }),
-    ).toThrow("is already a Window property");
-  });
+  it.each(["name", "innerWidth", "localStorage", "Array", "constructor"])(
+    "rejects the existing global expose key %s",
+    (expose) => {
+      expect(() =>
+        generateBridge([moduleFixture({ name: "profile", channels: [] })], { expose }),
+      ).toThrow("is already a standard global property");
+    },
+  );
 });

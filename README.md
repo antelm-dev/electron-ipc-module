@@ -371,7 +371,7 @@ Two things to keep in mind:
 - The renderer's tsconfig must **include the generated file** for the `Window` declaration to reach it. Nothing else changes: the file is still a preload artifact and still has to be bundled per the [preload constraints](#preload-constraints).
 - `check` compares against what the current options produce, so pass `--expose` there too or CI reports the committed bridge as stale.
 
-The key has to be an identifier `Window` does not already define: `ipc` is fine, while `my-ipc` and `name` fail generation instead of producing a file that cannot compile.
+The key has to be a new global identifier: `ipc` is fine, while `my-ipc`, `name`, `innerWidth`, and other names declared by the installed TypeScript DOM/ES libraries fail generation. Electron also rejects any runtime-specific global rather than overwriting it.
 
 Leave `expose` unset to keep exposing the bridge yourself — useful when the preload wraps or filters it before handing it to the renderer.
 
