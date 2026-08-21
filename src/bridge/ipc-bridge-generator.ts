@@ -37,8 +37,29 @@ function serializable(typeStr: string) {
 }
 
 /** The runtime `electron` import line. */
-function generateImportLine() {
-  return `import { ipcRenderer } from 'electron';`;
+function generateImportLine(expose: string | undefined) {
+  return `import { ${expose ? "contextBridge, ipcRenderer" : "ipcRenderer"} } from 'electron';`;
+}
+
+/**
+ * The `contextBridge` call and the `Window` member that describes it.
+ *
+ * Both are emitted from the same key so the exposed name and the type the
+ * renderer sees cannot disagree: hand-written, that mismatch type-checks and
+ * then leaves `window.<key>` undefined at runtime.
+ */
+function generateExposeLines(expose: string) {
+  assertIdentifier(expose, "expose option");
+  return [
+    "",
+    `contextBridge.exposeInMainWorld(${JSON.stringify(expose)}, bridge);`,
+    "",
+    "declare global {",
+    "  interface Window {",
+    `    ${expose}: typeof bridge;`,
+    "  }",
+    "}",
+  ];
 }
 
 /** Type-only import of `Serializable`, erased at build time. */
@@ -138,9 +159,10 @@ function generateModuleEntry(ipcModule: AnalyzedIpcModule) {
 
 /**
  * Render the full `ipc-bridge.ts` source: the `electron` import, shared event
- * helpers (when needed), and a `bridge` object with one entry per module.
+ * helpers (when needed), a `bridge` object with one entry per module, and —
+ * with `expose` — the `contextBridge` call and `Window` declaration for it.
  */
-export function generateBridge(modules: AnalyzedIpcModule[]) {
+export function generateBridge(modules: AnalyzedIpcModule[], options: { expose?: string } = {}) {
   assertUniqueIdentifiers(
     modules.map((ipcModule) => [
       toCamelCase(ipcModule.name),
@@ -149,7 +171,7 @@ export function generateBridge(modules: AnalyzedIpcModule[]) {
     "IPC bridge",
   );
   const hasEmittedEvents = modules.some((ipcModule) => ipcModule.emittedEvents.length > 0);
-  const lines = [generateImportLine(), generateSerializableImportLine(), ""];
+  const lines = [generateImportLine(options.expose), generateSerializableImportLine(), ""];
 
   if (hasEmittedEvents) {
     lines.push(...generateEventHelpers());
@@ -157,7 +179,9 @@ export function generateBridge(modules: AnalyzedIpcModule[]) {
 
   const moduleEntries = modules.map(generateModuleEntry);
 
-  lines.push(`export const bridge = {\n${moduleEntries.join(",\n")},\n} as const;`, "");
+  lines.push(`export const bridge = {\n${moduleEntries.join(",\n")},\n} as const;`);
+  if (options.expose) lines.push(...generateExposeLines(options.expose));
+  lines.push("");
 
   return lines.join("\n");
 }

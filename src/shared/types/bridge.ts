@@ -17,6 +17,17 @@ export interface IpcBridgeOptions {
    * default logger drops.
    */
   logger?: LoggerLike;
+  /**
+   * Global key to expose the bridge under, e.g. `"ipc"` for `window.ipc`.
+   *
+   * When set, the generated file also calls `contextBridge.exposeInMainWorld`
+   * and declares the matching `Window` member, so the exposed key and the type
+   * the renderer sees are produced from one source instead of two hand-written
+   * files that can drift apart.
+   *
+   * Left unset the bridge is only exported, and wiring both up is yours to do.
+   */
+  expose?: string;
 }
 
 /** {@link IpcBridgeOptions} with defaults applied and paths normalized. */
@@ -25,6 +36,7 @@ export interface ResolvedIpcBridgeOptions {
   outFile: string;
   tsconfig: string;
   logger: LoggerLike;
+  expose?: string;
 }
 
 /** A single analyzed channel of an IPC module. */

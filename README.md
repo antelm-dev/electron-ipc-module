@@ -130,6 +130,8 @@ declare global {
 }
 ```
 
+Both of these are boilerplate the generator can write instead — see [`expose`](#exposing-the-bridge-automatically).
+
 ### 6. Call from the renderer
 
 ```ts
@@ -350,8 +352,26 @@ Analyzes `*.ipc.ts` files and generates a typed bridge for the renderer.
 | `outFile`  | `./src/generated/ipc-bridge.ts` | Generated TypeScript output                   |
 | `tsconfig` | `./tsconfig.json`               | TypeScript config used for static analysis    |
 | `logger`   | labelled console logger         | Where progress and analyzer warnings are sent |
+| `expose`   | not set                         | Global key to expose the bridge under         |
 
 `logger` takes any `LoggerLike` — `Pick<Console, "debug" \| "info" \| "warn" \| "error" \| "log">`, exported from the root. Supply one to route generator output into a build tool's own reporter, to silence it in a watch loop, or to see the per-module `debug` detail the default logger drops. The default prints `info` and above; a supplied logger receives every level.
+
+**Exposing the bridge automatically**
+
+Set `expose` to have the generator write [step 4](#4-expose-the-bridge-in-preload) and [step 5](#5-type-windowipc-in-the-renderer) for you:
+
+```ts
+ipcBridge({ expose: "ipc" });
+```
+
+The generated file then imports `contextBridge`, ends with `contextBridge.exposeInMainWorld("ipc", bridge)`, and declares `Window["ipc"]` as `typeof bridge`. Both come from the one key, so the exposed name and the type the renderer sees cannot drift apart — a mismatch that still type-checks and shows up only as an undefined `window.ipc` at runtime.
+
+Two things to keep in mind:
+
+- The renderer's tsconfig must **include the generated file** for the `Window` declaration to reach it. Nothing else changes: the file is still a preload artifact and still has to be bundled per the [preload constraints](#preload-constraints).
+- `check` compares against what the current options produce, so pass `--expose` there too or CI reports the committed bridge as stale.
+
+Leave `expose` unset to keep exposing the bridge yourself — useful when the preload wraps or filters it before handing it to the renderer.
 
 **Naming conventions**
 
@@ -424,6 +444,7 @@ main/
     settings.ipc.ts
   generated/
     ipc-bridge.ts     # generated, committed, verified by `check` in CI
+npx electron-ipc-module generate --expose ipc
   main.ts
   preload.ts          # bundled to a single CommonJS file — see preload constraints
 renderer/

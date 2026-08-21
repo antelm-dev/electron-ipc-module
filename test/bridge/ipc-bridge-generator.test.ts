@@ -164,4 +164,35 @@ describe("generateBridge", () => {
 
     expect(code).toContain('createOnHelper<[]>("profile:updated", listener)');
   });
+
+  it("exposes the bridge and declares the global when expose is set", () => {
+    const code = generateBridge(
+      [
+        moduleFixture({
+          name: "profile",
+          channels: [{ key: "get", isHandler: true, argsType: null, returnType: "void" }],
+        }),
+      ],
+      { expose: "ipc" },
+    );
+
+    expect(code).toContain("import { contextBridge, ipcRenderer } from 'electron';");
+    expect(code).toContain('contextBridge.exposeInMainWorld("ipc", bridge);');
+    expect(code).toContain("declare global {");
+    expect(code).toContain("    ipc: typeof bridge;");
+  });
+
+  it("leaves the bridge exported only when expose is unset", () => {
+    const code = generateBridge([moduleFixture({ name: "profile", channels: [] })]);
+
+    expect(code).toContain("import { ipcRenderer } from 'electron';");
+    expect(code).not.toContain("contextBridge");
+    expect(code).not.toContain("declare global");
+  });
+
+  it("rejects an expose key that is not a valid identifier", () => {
+    expect(() =>
+      generateBridge([moduleFixture({ name: "profile", channels: [] })], { expose: "my-ipc" }),
+    ).toThrow("expose option produces invalid bridge identifier");
+  });
 });
