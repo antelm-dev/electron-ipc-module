@@ -356,7 +356,7 @@ defineIpcModule("export", {
 });
 ```
 
-The signal is cooperative: aborting it does not terminate the handler, select an error, or settle the renderer promise automatically. It tracks destruction of the `WebContents` and nothing else — a reload or an in-place navigation abandons the pending invocation without aborting, because the `WebContents` itself survives. One read-only signal is shared by every invocation from the same sender, and it stays valid after the handler settles. Use the two-channel pattern above when cancellation must also work while the renderer is still alive.
+The signal is cooperative: aborting it does not terminate the handler, select an error, or settle the renderer promise automatically. It tracks destruction of the `WebContents` and nothing else — a reload or an in-place navigation abandons the pending invocation without aborting, because the `WebContents` itself survives. One read-only signal is shared by every invocation from the same sender, and it stays valid after the handler settles. It is built the first time a handler reads it, so it needs a global `AbortController` — Electron 15 or newer; reading it on an older runtime throws, while handlers that never touch it keep working on the package's Electron 12 peer floor. Use the two-channel pattern above when cancellation must also work while the renderer is still alive.
 
 ### Rollup plugin (`electron-ipc-module/rollup-plugin`)
 

@@ -262,10 +262,22 @@ const senderSignals = new WeakMap<WebContents, AbortSignal>();
  * so every invoke from the same window shares one outcome, and one listener per
  * sender stays clear of the default `EventEmitter` cap of 10 however many
  * invocations are in flight.
+ *
+ * Built on first read rather than on every invocation, so the declared peer
+ * floor of Electron 12 keeps working: `AbortController` only became an
+ * unflagged global in Node 15, which Electron ships from 15.0.0. Handlers that
+ * never touch `event.signal` never construct one.
  */
 function senderSignal(sender: WebContents): AbortSignal {
   const cached = senderSignals.get(sender);
   if (cached) return cached;
+
+  if (typeof AbortController === "undefined") {
+    throw new Error(
+      "event.signal requires a global AbortController, which Electron ships from 15.0.0 (Node 16). " +
+        "Every other channel feature still runs on the declared peer floor of Electron 12.",
+    );
+  }
 
   const controller = new AbortController();
   if (sender.isDestroyed()) controller.abort();
@@ -278,12 +290,12 @@ function senderSignal(sender: WebContents): AbortSignal {
 function wrapEvent<T extends IpcMainEvent | IpcMainInvokeEvent>(
   event: T,
   eventPrefix: string | undefined,
-  signal?: AbortSignal,
+  lifecycleSignal = false,
 ): T {
-  if (!eventPrefix && !signal) return event;
+  if (!eventPrefix && !lifecycleSignal) return event;
   return new Proxy(event, {
     get(object, property) {
-      if (property === "signal" && signal) return signal;
+      if (lifecycleSignal && property === "signal") return senderSignal(object.sender);
       if (property === "sender") return wrapSendTarget(object.sender, eventPrefix);
       if (property === "senderFrame") {
         return object.senderFrame ? wrapSendTarget(object.senderFrame, eventPrefix) : null;
@@ -337,28 +349,27 @@ export function defineIpcModule<TChannels extends Record<string, ChannelDef>>(
         const callUserFunction = (
           event: IpcMainEvent | IpcMainInvokeEvent,
           args: unknown[],
-          signal?: AbortSignal,
-        ) => def.fn(wrapEvent(event, eventPrefix, signal) as never, ...args);
+          lifecycleSignal?: boolean,
+        ) => def.fn(wrapEvent(event, eventPrefix, lifecycleSignal) as never, ...args);
         const runGuarded = async (
           event: IpcMainEvent | IpcMainInvokeEvent,
           args: unknown[],
-          signal?: AbortSignal,
+          lifecycleSignal?: boolean,
         ): Promise<unknown> => {
           if ((await authorize?.(event, context)) === false) {
             throw new IpcAuthorizationError(channel);
           }
           const validated = validator ? await runValidator(validator, args, event, context) : args;
-          return callUserFunction(event, validated, signal);
+          return callUserFunction(event, validated, lifecycleSignal);
         };
 
         let fn: (...args: any[]) => any;
         if (def.kind === "handler") {
           fn =
             authorize || validator
-              ? (event: IpcMainInvokeEvent, ...args: unknown[]) =>
-                  runGuarded(event, args, senderSignal(event.sender))
+              ? (event: IpcMainInvokeEvent, ...args: unknown[]) => runGuarded(event, args, true)
               : (event: IpcMainInvokeEvent, ...args: unknown[]) =>
-                  callUserFunction(event, args, senderSignal(event.sender));
+                  callUserFunction(event, args, true);
 
           if (def.once) ipc.handleOnce(channel, fn);
           else ipc.handle(channel, fn);

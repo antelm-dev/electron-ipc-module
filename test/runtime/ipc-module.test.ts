@@ -478,8 +478,9 @@ describe("defineIpcModule invoke lifecycle signals", () => {
     const failure = new Error("nope");
 
     await defineIpcModule("jobs", {
-      ok: handle(() => "done"),
-      boom: handle(async () => {
+      ok: handle((event) => (event.signal.aborted ? "gone" : "done")),
+      boom: handle(async (event) => {
+        void event.signal;
         throw failure;
       }),
     })(ipc as never);
@@ -495,6 +496,47 @@ describe("defineIpcModule invoke lifecycle signals", () => {
     expect(sender.listenerCount("destroyed")).toBe(1);
     await Promise.all(pending);
     expect(sender.listenerCount("destroyed")).toBe(1);
+  });
+
+  it("stays off the sender until a handler reads the signal", async () => {
+    const { handlers, ipc } = createIpc();
+    const sender = createInvokeSender();
+
+    await defineIpcModule("jobs", { run: handle(() => "done") })(ipc as never);
+    expect(handlers.get("jobs:run")?.(createInvokeEvent(sender))).toBe("done");
+
+    // Nothing observes the sender, and no AbortController is constructed, for
+    // handlers that never touch `event.signal` — which is what keeps the
+    // Electron 12 peer floor working, since Node 14 has no global one.
+    expect(sender.listenerCount("destroyed")).toBe(0);
+  });
+
+  it("explains itself when the runtime has no global AbortController", async () => {
+    const { handlers, ipc } = createIpc();
+    const original = globalThis.AbortController;
+    let thrown: unknown;
+
+    await defineIpcModule("jobs", {
+      run: handle((event) => {
+        try {
+          return event.signal;
+        } catch (error) {
+          thrown = error;
+          return "caught";
+        }
+      }),
+    })(ipc as never);
+
+    // @ts-expect-error Simulating a Node 14 runtime, where the global is absent.
+    delete globalThis.AbortController;
+    try {
+      expect(handlers.get("jobs:run")?.(createInvokeEvent())).toBe("caught");
+    } finally {
+      globalThis.AbortController = original;
+    }
+
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toMatch(/Electron ships from 15.0.0/);
   });
 
   it("starts aborted when the sender was already destroyed", async () => {
