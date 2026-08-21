@@ -1,6 +1,9 @@
 import { vi } from "vitest";
 
 vi.mock("electron", () => ({
+  BrowserWindow: {
+    getAllWindows: vi.fn(() => []),
+  },
   ipcMain: {
     handle: vi.fn(),
     handleOnce: vi.fn(),
