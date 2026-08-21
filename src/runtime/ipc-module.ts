@@ -250,10 +250,12 @@ function wrapSendTarget<T extends object>(target: T, eventPrefix: string | undef
 function wrapEvent<T extends IpcMainEvent | IpcMainInvokeEvent>(
   event: T,
   eventPrefix: string | undefined,
+  signal?: AbortSignal,
 ): T {
-  if (!eventPrefix) return event;
+  if (!eventPrefix && !signal) return event;
   return new Proxy(event, {
     get(object, property) {
+      if (property === "signal" && signal) return signal;
       if (property === "sender") return wrapSendTarget(object.sender, eventPrefix);
       if (property === "senderFrame") {
         return object.senderFrame ? wrapSendTarget(object.senderFrame, eventPrefix) : null;
@@ -304,27 +306,39 @@ export function defineIpcModule<TChannels extends Record<string, ChannelDef>>(
         const channel = prefix ? `${prefix}:${key}` : key;
         const context = { channel, key, prefix } satisfies IpcChannelContext;
         const validator = validate?.[key] as IpcChannelValidator<readonly unknown[]> | undefined;
-        const callUserFunction = (event: IpcMainEvent | IpcMainInvokeEvent, args: unknown[]) =>
-          def.fn(wrapEvent(event, eventPrefix) as never, ...args);
+        const callUserFunction = (
+          event: IpcMainEvent | IpcMainInvokeEvent,
+          args: unknown[],
+          signal?: AbortSignal,
+        ) => def.fn(wrapEvent(event, eventPrefix, signal) as never, ...args);
         const runGuarded = async (
           event: IpcMainEvent | IpcMainInvokeEvent,
           args: unknown[],
+          signal?: AbortSignal,
         ): Promise<unknown> => {
           if ((await authorize?.(event, context)) === false) {
             throw new IpcAuthorizationError(channel);
           }
           const validated = validator ? await runValidator(validator, args, event, context) : args;
-          return callUserFunction(event, validated);
+          return callUserFunction(event, validated, signal);
         };
 
         let fn: (...args: any[]) => any;
         if (def.kind === "handler") {
-          fn =
-            authorize || validator
-              ? (event: IpcMainInvokeEvent, ...args: unknown[]) => runGuarded(event, args)
-              : eventPrefix
-                ? (event: IpcMainInvokeEvent, ...args: unknown[]) => callUserFunction(event, args)
-                : def.fn;
+          fn = async (event: IpcMainInvokeEvent, ...args: unknown[]) => {
+            const controller = new AbortController();
+            const abort = () => controller.abort();
+
+            event.sender.once("destroyed", abort);
+            try {
+              if (event.sender.isDestroyed()) abort();
+              return await (authorize || validator
+                ? runGuarded(event, args, controller.signal)
+                : callUserFunction(event, args, controller.signal));
+            } finally {
+              event.sender.removeListener("destroyed", abort);
+            }
+          };
 
           if (def.once) ipc.handleOnce(channel, fn);
           else ipc.handle(channel, fn);

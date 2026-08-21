@@ -75,10 +75,17 @@ import type { IpcMain } from "electron";
 type Events = { changed: [value: string] };
 const helpers = createIpcHelpers<Events>();
 const handler = helpers.handle<[value: string], number>((event, value) => {
+  const active: boolean = !event.signal.aborted;
+  event.signal.addEventListener("abort", () => undefined, { once: true });
+  // @ts-expect-error The sender-lifecycle signal is read-only.
+  event.signal = new AbortController().signal;
   event.sender.send("changed", value);
+  void active;
   return value.length;
 });
 const listener = helpers.listen<[value: string]>((event, value) => {
+  // @ts-expect-error Lifecycle signals are only exposed to invoke handlers.
+  void event.signal;
   event.reply("changed", value);
 });
 // A Standard Schema whose output matches the listener's declared parameters, so

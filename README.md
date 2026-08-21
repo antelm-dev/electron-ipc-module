@@ -318,9 +318,9 @@ A class with methods is rejected even though a prototype method would in fact be
 
 `ipcMain` is global, so the first call from _any_ window consumes the channel: later `invoke`s reject with "No handler registered", and later sends are dropped silently. In a multi-window app use `handle`/`listen` and track one-shot state yourself.
 
-#### No cancellation or progress API, by design
+#### Cancellation and progress
 
-There is no `AbortSignal` on the handler context and no streaming channel kind — two IPC channels already cover it:
+There is no renderer-facing cancellation or streaming channel kind. Use a second IPC channel for explicit user intent, such as a Cancel button, and send progress as typed events:
 
 ```ts
 // main
@@ -340,7 +340,23 @@ defineIpcModule("export", {
 });
 ```
 
-Open an issue if you have a case this pattern genuinely cannot cover.
+Invoke handlers also receive `event.signal`, which represents the lifetime of the renderer that made that particular call. It starts active and aborts if the originating window or other `WebContents` is destroyed. Check it before expensive work and before sending progress so a closed window does not leave unnecessary work running:
+
+```ts
+defineIpcModule("export", {
+  start: handle(async (event, jobId: string) => {
+    for (const chunk of chunks) {
+      if (event.signal.aborted) return { cancelled: true };
+      const result = await renderChunk(chunk);
+      if (event.signal.aborted) return { cancelled: true };
+      event.sender.send("export-progress", jobId, result);
+    }
+    return { cancelled: false };
+  }),
+});
+```
+
+The signal is cooperative: aborting it does not terminate the handler, select an error, or settle the renderer promise automatically. The library observes the sender only while that invocation is pending; after settlement, later destruction will not abort the released signal. Use the two-channel pattern above when cancellation must also work while the renderer is still alive.
 
 ### Rollup plugin (`electron-ipc-module/rollup-plugin`)
 
