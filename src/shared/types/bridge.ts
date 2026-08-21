@@ -25,6 +25,9 @@ export interface IpcBridgeOptions {
    * the renderer sees are produced from one source instead of two hand-written
    * files that can drift apart.
    *
+   * Must be an identifier `Window` does not already define — generation fails
+   * otherwise, rather than emitting a file that cannot compile.
+   *
    * Left unset the bridge is only exported, and wiring both up is yours to do.
    */
   expose?: string;

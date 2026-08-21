@@ -194,5 +194,16 @@ describe("generateBridge", () => {
     expect(() =>
       generateBridge([moduleFixture({ name: "profile", channels: [] })], { expose: "my-ipc" }),
     ).toThrow("expose option produces invalid bridge identifier");
+
+    // An empty key is a misconfiguration, not a request for no exposure.
+    expect(() =>
+      generateBridge([moduleFixture({ name: "profile", channels: [] })], { expose: "" }),
+    ).toThrow("expose option produces invalid bridge identifier");
+  });
+
+  it("rejects an expose key Window already defines", () => {
+    expect(() =>
+      generateBridge([moduleFixture({ name: "profile", channels: [] })], { expose: "name" }),
+    ).toThrow("is already a Window property");
   });
 });

@@ -3,6 +3,52 @@ import { toCamelCase, toPascalCase } from "../shared/utils.js";
 
 const IDENTIFIER_PATTERN = /^[$A-Z_a-z][$\w]*$/;
 
+/**
+ * `Window` members an `expose` key cannot reuse: a global augmentation has to
+ * repeat the original type, so declaring one as the bridge is TS2717 in the
+ * generated file.
+ *
+ * `Window` has hundreds of members and gains more with every DOM lib bump, so
+ * this covers the short, plausible-looking names rather than all of them. One
+ * that is missed still fails, just later — when the generated file is compiled.
+ */
+const RESERVED_WINDOW_KEYS = new Set([
+  "alert",
+  "blur",
+  "caches",
+  "close",
+  "closed",
+  "confirm",
+  "console",
+  "crypto",
+  "document",
+  "event",
+  "external",
+  "fetch",
+  "find",
+  "focus",
+  "frames",
+  "history",
+  "length",
+  "location",
+  "name",
+  "navigator",
+  "open",
+  "opener",
+  "origin",
+  "parent",
+  "performance",
+  "print",
+  "prompt",
+  "screen",
+  "scroll",
+  "self",
+  "status",
+  "stop",
+  "top",
+  "window",
+]);
+
 function assertIdentifier(identifier: string, description: string) {
   if (!IDENTIFIER_PATTERN.test(identifier)) {
     throw new Error(
@@ -38,7 +84,8 @@ function serializable(typeStr: string) {
 
 /** The runtime `electron` import line. */
 function generateImportLine(expose: string | undefined) {
-  return `import { ${expose ? "contextBridge, ipcRenderer" : "ipcRenderer"} } from 'electron';`;
+  const imports = expose === undefined ? "ipcRenderer" : "contextBridge, ipcRenderer";
+  return `import { ${imports} } from 'electron';`;
 }
 
 /**
@@ -50,6 +97,12 @@ function generateImportLine(expose: string | undefined) {
  */
 function generateExposeLines(expose: string) {
   assertIdentifier(expose, "expose option");
+  if (RESERVED_WINDOW_KEYS.has(expose)) {
+    throw new Error(
+      `expose option ${JSON.stringify(expose)} is already a Window property, which TypeScript ` +
+        `cannot redeclare with another type. Pick a key of your own, such as "ipc".`,
+    );
+  }
   return [
     "",
     `contextBridge.exposeInMainWorld(${JSON.stringify(expose)}, bridge);`,
@@ -180,7 +233,9 @@ export function generateBridge(modules: AnalyzedIpcModule[], options: { expose?:
   const moduleEntries = modules.map(generateModuleEntry);
 
   lines.push(`export const bridge = {\n${moduleEntries.join(",\n")},\n} as const;`);
-  if (options.expose) lines.push(...generateExposeLines(options.expose));
+  // Not a truthiness check: `expose: ""` is an invalid key to report, not a
+  // quiet opt-out of the exposure it asked for.
+  if (options.expose !== undefined) lines.push(...generateExposeLines(options.expose));
   lines.push("");
 
   return lines.join("\n");

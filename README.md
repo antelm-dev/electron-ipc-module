@@ -371,6 +371,8 @@ Two things to keep in mind:
 - The renderer's tsconfig must **include the generated file** for the `Window` declaration to reach it. Nothing else changes: the file is still a preload artifact and still has to be bundled per the [preload constraints](#preload-constraints).
 - `check` compares against what the current options produce, so pass `--expose` there too or CI reports the committed bridge as stale.
 
+The key has to be an identifier `Window` does not already define: `ipc` is fine, while `my-ipc` and `name` fail generation instead of producing a file that cannot compile.
+
 Leave `expose` unset to keep exposing the bridge yourself — useful when the preload wraps or filters it before handing it to the renderer.
 
 **Naming conventions**
@@ -409,6 +411,7 @@ npx electron-ipc-module generate \
   --out-file ./main/generated/ipc-bridge.ts \
   --tsconfig ./tsconfig.preload.json
 
+npx electron-ipc-module generate --expose ipc
 npx electron-ipc-module generate --watch
 npx electron-ipc-module generate --quiet
 npx electron-ipc-module check
@@ -444,7 +447,6 @@ main/
     settings.ipc.ts
   generated/
     ipc-bridge.ts     # generated, committed, verified by `check` in CI
-npx electron-ipc-module generate --expose ipc
   main.ts
   preload.ts          # bundled to a single CommonJS file — see preload constraints
 renderer/
