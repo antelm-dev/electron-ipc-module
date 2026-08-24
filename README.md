@@ -389,7 +389,9 @@ defineIpcModule("export", {
 });
 ```
 
-Invoke handlers also receive `event.signal`, which represents the lifetime of the `WebContents` that made the call. It starts active and aborts once that window (or other `WebContents`) is destroyed. Check it before expensive work and before sending progress so a closed window does not leave unnecessary work running:
+Sending to a window that has closed is safe on its own: `event.sender.send`, `event.senderFrame?.send`, and `event.reply` all drop the event once the target is destroyed, rather than throwing `Object has been destroyed` in main. An invoke that outlives its caller settles normally.
+
+That keeps the process alive; it does not stop the work. Invoke handlers also receive `event.signal`, which represents the lifetime of the `WebContents` that made the call. It starts active and aborts once that window (or other `WebContents`) is destroyed. Check it before expensive work so a closed window does not leave a job running:
 
 ```ts
 defineIpcModule("export", {

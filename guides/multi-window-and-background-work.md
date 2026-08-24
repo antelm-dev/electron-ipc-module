@@ -101,7 +101,13 @@ const exportReport = handle(async (event, jobId: string) => {
 `event.signal` aborts when the calling `WebContents` is destroyed. It is shared
 by all invocations from that sender and remains valid after a handler settles.
 It is cooperative: it does not interrupt work or settle the renderer's promise
-by itself. Check it before expensive steps and before emitting progress.
+by itself. Check it before expensive steps.
+
+The `send` above needs no guard of its own. `event.sender.send`,
+`event.senderFrame?.send`, and `event.reply` drop the event once the target is
+destroyed, so the window closing between the `aborted` check and the send costs
+nothing — it does not throw `Object has been destroyed` in main. The signal is
+there to stop the _work_, not to make the send safe.
 
 Reading the signal requires a runtime with a global `AbortController`, which
 Electron provides from version 15. Handlers that do not read it continue to
