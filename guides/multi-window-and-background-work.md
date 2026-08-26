@@ -113,6 +113,50 @@ Reading the signal requires a runtime with a global `AbortController`, which
 Electron provides from version 15. Handlers that do not read it continue to
 work on the package's Electron 12 peer floor.
 
+## Wire the signal into the work, not just the loop
+
+Checking `aborted` between steps only cancels work the handler itself drives.
+A child process, a file lock, or an open socket outlives the window unless the
+signal reaches the thing holding it. `event.signal` is a real `AbortSignal`, so
+pass it down rather than polling it:
+
+```ts
+const transcode = handle(async (event, input: string) => {
+  // Node terminates the child when the WebContents is destroyed.
+  const child = spawn("ffmpeg", ["-i", input, "out.mp4"], { signal: event.signal });
+  return await onceExit(child);
+});
+```
+
+`fs/promises`, `fetch`, `stream.pipeline`, and `events.once` accept it the same
+way. When a Cancel button has to abort the same work, compose the two with
+`AbortSignal.any([event.signal, jobController.signal])` — Node 20.3 and newer,
+so Electron 29 upward — or use the two-channel pattern below on older runtimes.
+
+For a resource with no `signal` option, release it from an abort listener, and
+remove that listener when the operation ends:
+
+```ts
+const withLock = handle(async (event, path: string) => {
+  const lock = await acquireLock(path);
+  const onAbort = () => void lock.release();
+  event.signal.addEventListener("abort", onAbort);
+  try {
+    return await useLock(lock);
+  } finally {
+    event.signal.removeEventListener("abort", onAbort);
+    await lock.release();
+  }
+});
+```
+
+The `finally` matters more here than in most cleanup. The signal is shared by
+every invocation from that sender and lives as long as the window, so a
+listener registered per call and never removed accumulates for the window's
+lifetime, and each closure keeps what it captures — the lock, the child process
+handle — reachable until the window closes. APIs that take a `signal` option
+manage their own listener; hand-registered ones are yours to remove.
+
 ## Let a live renderer cancel explicitly
 
 Closing a window aborts `event.signal`; pressing a Cancel button does not. Add a
