@@ -28,8 +28,8 @@ importers:
         specifier: 4.1.10
         version: 4.1.10(vitest@4.1.10)
       electron:
-        specifier: ^43.2.0
-        version: 43.3.0
+        specifier: ^44.0.0
+        version: 44.0.0
       oxfmt:
         specifier: ^0.62.0
         version: 0.62.0
@@ -1052,8 +1052,8 @@ packages:
     resolution: {integrity: sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ==}
     engines: {node: '>=8'}
 
-  electron@43.3.0:
-    resolution: {integrity: sha512-nLlvu0WFjftWsSaTkV2B/c4NDuJBspTyXu8vKSQ6vLvFt8uG3NgN49LLKcXddwX0GqVvAQDhciWp+4xOdTdhew==}
+  electron@44.0.0:
+    resolution: {integrity: sha512-FkTqPrFPZYljdPI5b7KORGsJTd6FgUQDefl5MrU3Xz9R87pAj9JLreIjDqcRN8hJIkFHIou0o8kKzvcpT9qiRQ==}
     engines: {node: '>= 22.12.0'}
     hasBin: true
 
@@ -2453,7 +2453,7 @@ snapshots:
 
   detect-libc@2.1.2: {}
 
-  electron@43.3.0:
+  electron@44.0.0:
     dependencies:
       '@electron-internal/extract-zip': 1.0.5
       '@electron/get': 5.1.0

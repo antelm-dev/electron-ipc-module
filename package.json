@@ -72,7 +72,7 @@
     "@commitlint/config-conventional": "^21.2.0",
     "@types/node": "^26.1.2",
     "@vitest/coverage-v8": "4.1.10",
-    "electron": "^43.2.0",
+    "electron": "^44.0.0",
     "oxfmt": "^0.62.0",
     "oxlint": "^1.72.0",
     "publint": "0.3.23",
