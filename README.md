@@ -389,7 +389,9 @@ defineIpcModule("export", {
 });
 ```
 
-Invoke handlers also receive `event.signal`, which represents the lifetime of the `WebContents` that made the call. It starts active and aborts once that window (or other `WebContents`) is destroyed. Check it before expensive work and before sending progress so a closed window does not leave unnecessary work running:
+Sending to a window that has closed is safe on its own: `event.sender.send`, `event.senderFrame?.send`, and `event.reply` all drop the event once the target is destroyed, rather than throwing `Object has been destroyed` in main. An invoke that outlives its caller settles normally.
+
+That keeps the process alive; it does not stop the work. Invoke handlers also receive `event.signal`, which represents the lifetime of the `WebContents` that made the call. It starts active and aborts once that window (or other `WebContents`) is destroyed. Check it before expensive work so a closed window does not leave a job running:
 
 ```ts
 defineIpcModule("export", {
@@ -404,6 +406,40 @@ defineIpcModule("export", {
   }),
 });
 ```
+
+Polling `aborted` only cancels work the handler drives itself. A child process, a file lock, or an open socket keeps running after the window is gone unless the signal reaches it. It is a real `AbortSignal`, so pass it to anything that accepts one instead of checking it by hand:
+
+```ts
+defineIpcModule("export", {
+  start: handle(async (event, input: string) => {
+    // Node kills the child when the window closes.
+    const { stdout } = await execFile("ffmpeg", ["-i", input, "out.mp4"], {
+      signal: event.signal,
+    });
+    return stdout;
+  }),
+});
+```
+
+`fs/promises`, `fetch`, `stream.pipeline`, `events.once`, and most third-party clients take a `signal` option the same way.
+
+For a resource with no `signal` option, release it from an abort listener — and remove that listener when the operation finishes:
+
+```ts
+const release = handle(async (event, path: string) => {
+  const lock = await acquireLock(path);
+  const onAbort = () => void lock.release();
+  event.signal.addEventListener("abort", onAbort);
+  try {
+    return await useLock(lock);
+  } finally {
+    event.signal.removeEventListener("abort", onAbort);
+    await lock.release();
+  }
+});
+```
+
+The `finally` is not optional. One signal is shared by every invocation from a sender and lives as long as the window, so a listener added per call and never removed accumulates for the window's lifetime and keeps whatever its closure captures — the lock, the child process handle — reachable that whole time. Options that take a `signal` clean up after themselves; hand-registered listeners do not.
 
 The signal is cooperative: aborting it does not terminate the handler, select an error, or settle the renderer promise automatically. It tracks destruction of the `WebContents` and nothing else — a reload or an in-place navigation abandons the pending invocation without aborting, because the `WebContents` itself survives. One read-only signal is shared by every invocation from the same sender, and it stays valid after the handler settles. It is built the first time a handler reads it, so it needs a global `AbortController` — Electron 15 or newer; reading it on an older runtime throws, while handlers that never touch it keep working on the package's Electron 12 peer floor. Use the two-channel pattern above when cancellation must also work while the renderer is still alive.
 

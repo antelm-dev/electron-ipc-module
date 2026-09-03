@@ -301,22 +301,67 @@ export function createIpcEmitter<TEvents extends IpcEventMap>(
   };
 }
 
+/**
+ * Whether a send target is gone, so sending to it would throw in main.
+ *
+ * `isDestroyed` is read defensively rather than called outright: `WebContents`
+ * has always carried it, but `WebFrameMain` is newer than the declared Electron
+ * 12 peer floor, and a frame without the method is treated as live instead of
+ * making the guard itself the thing that throws.
+ */
+function isGone(target: object | null | undefined): boolean {
+  const isDestroyed = (target as { isDestroyed?: () => boolean } | null | undefined)?.isDestroyed;
+  return typeof isDestroyed === "function" && isDestroyed.call(target);
+}
+
+/**
+ * Wrapped send targets, keyed by target and then by event prefix.
+ *
+ * A fresh proxy per property read would make `event.sender !== event.sender`,
+ * which breaks tracking a window across calls in a `WeakSet<WebContents>` — the
+ * per-window initialization pattern the guides document. One proxy per
+ * (target, prefix) pair keeps that identity stable.
+ */
+const wrappedSendTargets = new WeakMap<object, Map<string, object>>();
+
+/**
+ * Wrap a `WebContents` or `WebFrameMain` so `send` prefixes its channel and
+ * drops the event once the target is destroyed.
+ *
+ * A window can close while an invoke is still in flight, and Electron throws
+ * `Object has been destroyed` when the handler finally resolves into `send`.
+ * Guarding here covers `event.sender` and `event.senderFrame` for every module,
+ * prefixed or not, so no handler has to test sender liveness itself.
+ */
 function wrapSendTarget<T extends object>(target: T, eventPrefix: string | undefined): T {
-  if (!eventPrefix) return target;
-  return new Proxy(target, {
+  const prefixKey = eventPrefix ?? "";
+  let byPrefix = wrappedSendTargets.get(target);
+  const cached = byPrefix?.get(prefixKey);
+  if (cached) return cached as T;
+
+  const wrapped = new Proxy(target, {
     get(object, property) {
       if (property === RAW_SEND_TARGET) return object;
       if (property !== "send") {
         const value = Reflect.get(object, property, object);
         return typeof value === "function" ? value.bind(object) : value;
       }
-      return (channel: string, ...args: unknown[]) =>
+      return (channel: string, ...args: unknown[]) => {
+        if (isGone(object)) return;
         Reflect.apply(Reflect.get(object, property) as (...args: unknown[]) => unknown, object, [
           prefixEventChannel(eventPrefix, channel),
           ...args,
         ]);
+      };
     },
   });
+
+  if (!byPrefix) {
+    byPrefix = new Map<string, object>();
+    wrappedSendTargets.set(target, byPrefix);
+  }
+  byPrefix.set(prefixKey, wrapped);
+  return wrapped as T;
 }
 
 const senderSignals = new WeakMap<WebContents, AbortSignal>();
@@ -358,17 +403,20 @@ function wrapEvent<T extends IpcMainEvent | IpcMainInvokeEvent>(
   eventPrefix: string | undefined,
   lifecycleSignal = false,
 ): T {
-  if (!eventPrefix && !lifecycleSignal) return event;
   return new Proxy(event, {
     get(object, property) {
       if (lifecycleSignal && property === "signal") return senderSignal(object.sender);
-      if (property === "sender") return wrapSendTarget(object.sender, eventPrefix);
+      if (property === "sender") {
+        return object.sender ? wrapSendTarget(object.sender, eventPrefix) : object.sender;
+      }
       if (property === "senderFrame") {
         return object.senderFrame ? wrapSendTarget(object.senderFrame, eventPrefix) : null;
       }
       if (property === "reply" && "reply" in object) {
-        return (channel: string, ...args: unknown[]) =>
+        return (channel: string, ...args: unknown[]) => {
+          if (isGone(object.sender)) return;
           object.reply(prefixEventChannel(eventPrefix, channel), ...args);
+        };
       }
       const value = Reflect.get(object, property, object);
       return typeof value === "function" ? value.bind(object) : value;
@@ -442,12 +490,12 @@ export function defineIpcModule<TChannels extends Record<string, ChannelDef>>(
 
           registered.push([channel, () => ipc.removeHandler(channel)]);
         } else {
+          // Every listener is wrapped, prefix or not: `event.sender.send` and
+          // `event.reply` need the destroyed-sender guard as much as handlers do.
           const invoke =
             authorize || validator
               ? (event: IpcMainEvent, args: unknown[]) => runGuarded(event, args)
-              : eventPrefix
-                ? (event: IpcMainEvent, args: unknown[]) => callUserFunction(event, args)
-                : (event: IpcMainEvent, args: unknown[]) => def.fn(event as never, ...args);
+              : (event: IpcMainEvent, args: unknown[]) => callUserFunction(event, args);
 
           fn = (event: IpcMainEvent, ...args: unknown[]) => {
             const onError = (error: unknown) =>
