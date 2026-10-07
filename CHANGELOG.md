@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.1](https://github.com/antelm-dev/electron-ipc-module/compare/v1.1.0...v1.1.1) (2026-10-07)
+
+
+### Bug Fixes
+
+* drop renderer sends once the target WebContents is destroyed ([#80](https://github.com/antelm-dev/electron-ipc-module/issues/80)) ([cbca0d4](https://github.com/antelm-dev/electron-ipc-module/commit/cbca0d4dad1ba8834af07aaca1ed2a9cb8109819))
+
 ## [1.1.0](https://github.com/antelm-dev/electron-ipc-module/compare/v1.0.1...v1.1.0) (2026-08-21)
 
 
