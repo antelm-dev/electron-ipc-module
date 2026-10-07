@@ -102,7 +102,8 @@ subscribe to the wrong name. Use `true` or an inline string.
 
 ### `Type 'IpcUncloneable<T>' is not assignable to type 'ChannelDef'`
 
-The channel's arguments or return value cannot cross the IPC boundary —
+The channel's arguments, return value, or — for a `stream` — yielded chunk
+cannot cross the IPC boundary —
 typically a function, `Promise`, symbol, or a class instance carrying methods,
 anywhere inside the payload. Structured clone rejects the whole payload rather
 than dropping the offending member, so the check fires at the declaration
@@ -137,6 +138,18 @@ Plus these messages:
   — a handler read `event.signal` on an older runtime. The signal is built on
   first read, so handlers that never touch it keep working on the package's
   Electron 12 peer floor.
+- **`IPC stream "…" needs a unique string call id`** — the start channel of a
+  `stream` was invoked without the per-call id the generated bridge supplies,
+  or with one already in flight. A renderer calling `ipcRenderer.invoke` on the
+  channel by hand, rather than through the bridge, is the usual cause.
+- **`[electron-ipc-module] Stream cleanup failed for "…"`** — a stream was
+  cancelled or its sender destroyed, and the generator's `finally` threw while
+  `return()` ran it. The renderer has stopped listening, so it is logged. Keep
+  cleanup in `finally` from throwing.
+- **`Error invoking remote method '…': …`** in the renderer, from a stream — the
+  `stream` callback threw, before its first `yield` or mid-stream; the text after
+  the colon is the error's string form. See the
+  [error contract](./error-contract.md).
 - **`[electron-ipc-module] Unhandled error in listener "…"`** — a `listen`
   channel rejected and no `onListenerError` was configured. Fire-and-forget
   channels have no response path, so the failure is logged rather than returned

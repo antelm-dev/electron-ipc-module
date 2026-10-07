@@ -137,9 +137,10 @@ function generateExposeLines(expose: string) {
   ];
 }
 
-/** Type-only import of `Serializable`, erased at build time. */
-function generateSerializableImportLine() {
-  return `import type { Serializable } from 'electron-ipc-module';`;
+/** Type-only import of `Serializable` (and `IpcStream`), erased at build time. */
+function generateSerializableImportLine(hasStreams: boolean) {
+  const types = hasStreams ? "IpcStream, Serializable" : "Serializable";
+  return `import type { ${types} } from 'electron-ipc-module';`;
 }
 
 /** The shared `createOnHelper`/`createOnceHelper` source emitted once per bridge. */
@@ -174,12 +175,96 @@ function generateEventHelpers() {
   ];
 }
 
-/** One bridge method that invokes/sends on a channel, e.g. `getAll: (…) => …`. */
+/**
+ * The shared `createStreamHelper` source, emitted once per bridge that has a
+ * `stream` channel.
+ *
+ * It subscribes before invoking start, so no chunk can arrive unheard, and
+ * buffers chunks until `next()` asks for them. Each call gets random ids from
+ * `getRandomValues` rather than `randomUUID`, which needs a secure context and
+ * Chromium 92 — the Electron 12 floor ships 89. Every channel is a literal the
+ * caller passes in, so the bridge still reaches only declared channels.
+ */
+function generateStreamHelper() {
+  return [
+    "function createStreamHelper<T>(",
+    "  channel: string,",
+    "  eventChannel: string,",
+    "  cancelChannel: string,",
+    "  args: unknown[],",
+    "): IpcStream<T> {",
+    '  const id = crypto.getRandomValues(new Uint32Array(4)).join("-");',
+    "  const chunks: T[] = [];",
+    "  let closed = false;",
+    "  let failure: unknown;",
+    "  let wake = () => {};",
+    "",
+    "  const close = (error?: unknown) => {",
+    "    if (closed) return;",
+    "    closed = true;",
+    "    failure = error;",
+    "    ipcRenderer.removeListener(eventChannel, onEvent);",
+    "    wake();",
+    "  };",
+    "  const onEvent = (_event: unknown, callId: string, type: string, payload: unknown) => {",
+    "    if (callId !== id) return;",
+    '    if (type === "chunk") {',
+    "      chunks.push(payload as T);",
+    "      wake();",
+    "    } else {",
+    "      close(type === \"error\" ? new Error(`Error invoking remote method '${channel}': ${payload}`) : undefined);",
+    "    }",
+    "  };",
+    "  const cancel = () => {",
+    "    if (closed) return;",
+    "    chunks.length = 0;",
+    "    ipcRenderer.send(cancelChannel, id);",
+    "    close();",
+    "  };",
+    "",
+    "  ipcRenderer.on(eventChannel, onEvent);",
+    "  ipcRenderer.invoke(channel, id, ...args).catch(close);",
+    "",
+    "  return {",
+    "    async next() {",
+    "      while (chunks.length === 0 && !closed) {",
+    "        await new Promise<void>((resolve) => (wake = resolve));",
+    "      }",
+    "      if (chunks.length > 0) return { done: false, value: chunks.shift() as T };",
+    "      if (failure !== undefined) {",
+    "        const error = failure;",
+    "        failure = undefined;",
+    "        throw error;",
+    "      }",
+    "      return { done: true, value: undefined };",
+    "    },",
+    "    async return() {",
+    "      cancel();",
+    "      return { done: true, value: undefined };",
+    "    },",
+    "    cancel,",
+    "  };",
+    "}",
+    "",
+  ];
+}
+
+/** One bridge method that invokes/sends/streams on a channel, e.g. `getAll: (…) => …`. */
 function generateChannelEntry(channel: ChannelInfo, prefix: string) {
   const channelName = prefix ? `${prefix}:${channel.key}` : channel.key;
   const camelKey = toCamelCase(channel.key);
-  const method = channel.isHandler ? "invoke" : "send";
   const paramDecl = channel.argsType ? `...args: ${serializable(channel.argsType)}` : "";
+
+  if (channel.isStream) {
+    const chunkType = serializable(channel.returnType);
+    const channels = [channelName, `${channelName}:event`, `${channelName}:cancel`]
+      .map((name) => JSON.stringify(name))
+      .join(", ");
+    const args = channel.argsType ? "args" : "[]";
+    return `    ${camelKey}: (${paramDecl}): IpcStream<${chunkType}> => createStreamHelper<${chunkType}>(${channels}, ${args})`;
+  }
+
+  const method = channel.isHandler ? "invoke" : "send";
   const forward = channel.argsType ? ", ...args" : "";
   const returnAnnotation = channel.isHandler
     ? `Promise<${serializable(channel.returnType)}>`
@@ -234,7 +319,7 @@ function generateModuleEntry(ipcModule: AnalyzedIpcModule) {
 
 /**
  * Render the full `ipc-bridge.ts` source: the `electron` import, shared event
- * helpers (when needed), a `bridge` object with one entry per module, and —
+ * and stream helpers (when needed), a `bridge` object with one entry per module, and —
  * with `expose` — the `contextBridge` call and `Window` declaration for it.
  */
 export function generateBridge(modules: AnalyzedIpcModule[], options: { expose?: string } = {}) {
@@ -246,10 +331,20 @@ export function generateBridge(modules: AnalyzedIpcModule[], options: { expose?:
     "IPC bridge",
   );
   const hasEmittedEvents = modules.some((ipcModule) => ipcModule.emittedEvents.length > 0);
-  const lines = [generateImportLine(options.expose), generateSerializableImportLine(), ""];
+  const hasStreams = modules.some((ipcModule) =>
+    ipcModule.channels.some((channel) => channel.isStream),
+  );
+  const lines = [
+    generateImportLine(options.expose),
+    generateSerializableImportLine(hasStreams),
+    "",
+  ];
 
   if (hasEmittedEvents) {
     lines.push(...generateEventHelpers());
+  }
+  if (hasStreams) {
+    lines.push(...generateStreamHelper());
   }
 
   const moduleEntries = modules.map(generateModuleEntry);

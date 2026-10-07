@@ -338,6 +338,30 @@ export function unwrapAwaitedType(checker: ts.TypeChecker, type: ts.Type): ts.Ty
   return type;
 }
 
+/** Iteration types whose first type argument is the element they yield. */
+const ITERATION_TYPES = new Set([
+  "AsyncGenerator",
+  "AsyncIterable",
+  "AsyncIterableIterator",
+  "Generator",
+  "Iterable",
+  "IterableIterator",
+]);
+
+/**
+ * Unwrap the element type of an `AsyncIterable<T>` / `Iterable<T>` /
+ * `(Async)Generator<T, …>` (including unions of them) down to `T`, or
+ * `undefined` when `type` is none of those.
+ */
+export function unwrapIteratedType(checker: ts.TypeChecker, type: ts.Type): ts.Type | undefined {
+  for (const candidate of type.isUnion() ? type.types : [type]) {
+    if (!ITERATION_TYPES.has(candidate.getSymbol()?.getName() ?? "")) continue;
+    const [element] = checker.getTypeArguments(candidate as ts.TypeReference);
+    if (element) return element;
+  }
+  return undefined;
+}
+
 /** Serialize a type to its string form using {@link SERIALIZE_FLAGS}. */
 export function serializeType(checker: ts.TypeChecker, type: ts.Type) {
   return checker.typeToString(type, undefined, SERIALIZE_FLAGS);

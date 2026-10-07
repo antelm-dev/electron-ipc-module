@@ -1,7 +1,12 @@
-import { describe, it, expect } from "vitest";
+import { EventEmitter } from "node:events";
+
+import ts from "typescript";
+import { describe, it, expect, vi } from "vitest";
 
 import { generateBridge } from "../../src/bridge/ipc-bridge-generator.js";
-import type { AnalyzedIpcModule } from "../../src/shared/types/bridge.js";
+import { defineIpcModule, stream } from "../../src/runtime/ipc-module.js";
+import type { AnalyzedIpcModule, ChannelInfo } from "../../src/shared/types/bridge.js";
+import type { IpcStream } from "../../src/shared/types/runtime.js";
 
 const moduleFixture = (
   overrides: Partial<AnalyzedIpcModule> & Pick<AnalyzedIpcModule, "name" | "channels">,
@@ -152,6 +157,48 @@ describe("generateBridge", () => {
     ).toThrow("generated identifier collision");
   });
 
+  it("generates an IpcStream method and the shared helper for stream channels", () => {
+    const code = generateBridge([
+      moduleFixture({
+        name: "export",
+        channels: [
+          {
+            key: "run",
+            isHandler: false,
+            isStream: true,
+            argsType: "[input: string]",
+            returnType: "number",
+          },
+          { key: "ticks", isHandler: false, isStream: true, argsType: null, returnType: "Date" },
+        ],
+      }),
+    ]);
+
+    expect(code).toContain("import type { IpcStream, Serializable } from 'electron-ipc-module';");
+    expect(code.match(/function createStreamHelper</g)).toHaveLength(1);
+    expect(code).not.toContain("createOnHelper");
+    expect(code).toContain(
+      'run: (...args: Serializable<[input: string]>): IpcStream<Serializable<number>> => createStreamHelper<Serializable<number>>("export:run", "export:run:event", "export:run:cancel", args)',
+    );
+    expect(code).toContain(
+      'ticks: (): IpcStream<Serializable<Date>> => createStreamHelper<Serializable<Date>>("export:ticks", "export:ticks:event", "export:ticks:cancel", [])',
+    );
+  });
+
+  it("emits no stream helper or IpcStream import without a stream channel", () => {
+    const code = generateBridge([
+      moduleFixture({
+        name: "app",
+        channels: [{ key: "ping", isHandler: true, argsType: null, returnType: "string" }],
+        emittedEvents: [{ key: "changed", argsType: null }],
+      }),
+    ]);
+
+    expect(code).toContain("import type { Serializable } from 'electron-ipc-module';");
+    expect(code).not.toContain("IpcStream");
+    expect(code).not.toContain("createStreamHelper");
+  });
+
   it("uses the configured physical event prefix", () => {
     const code = generateBridge([
       moduleFixture({
@@ -209,4 +256,157 @@ describe("generateBridge", () => {
       ).toThrow("is already a standard global property");
     },
   );
+});
+
+/**
+ * The emitted `createStreamHelper`, run against the real runtime.
+ *
+ * The generated bridge is transpiled and evaluated with `electron` stubbed by
+ * an `ipcRenderer` wired straight to a fake `ipcMain`, so these exercise the
+ * code users actually ship, and would catch the generator and the runtime
+ * disagreeing about a derived channel name.
+ */
+describe("generated createStreamHelper", () => {
+  const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  const wire = async (
+    channels: Parameters<typeof defineIpcModule>[1],
+    authorize?: () => boolean,
+  ) => {
+    const handlers = new Map<string, (...args: unknown[]) => unknown>();
+    const mainListeners = new Map<string, (...args: unknown[]) => void>();
+    const renderer = new EventEmitter();
+    const sender = Object.assign(new EventEmitter(), {
+      isDestroyed: () => false,
+      send: (channel: string, ...args: unknown[]) => renderer.emit(channel, {}, ...args),
+    });
+    const ipcMain = {
+      handle: (channel: string, fn: (...args: unknown[]) => unknown) => handlers.set(channel, fn),
+      on: (channel: string, fn: (...args: unknown[]) => void) => mainListeners.set(channel, fn),
+    };
+    const ipcRenderer = {
+      // Electron's own invoke rejection shape, so the helper's errors can be
+      // compared with what a failed `handle` produces.
+      invoke: async (channel: string, ...args: unknown[]) => {
+        try {
+          return await handlers.get(channel)?.({ sender, senderFrame: null }, ...args);
+        } catch (error) {
+          throw new Error(`Error invoking remote method '${channel}': ${error}`);
+        }
+      },
+      send: vi.fn((channel: string, ...args: unknown[]) =>
+        mainListeners.get(channel)?.({ sender }, ...args),
+      ),
+      on: (channel: string, listener: (...args: unknown[]) => void) =>
+        renderer.on(channel, listener),
+      removeListener: (channel: string, listener: (...args: unknown[]) => void) =>
+        renderer.removeListener(channel, listener),
+    };
+
+    await defineIpcModule("export", channels, { authorize })(ipcMain as never);
+
+    const channelInfo: ChannelInfo = {
+      key: "run",
+      isHandler: false,
+      isStream: true,
+      argsType: "[input: string]",
+      returnType: "string",
+    };
+    const { outputText } = ts.transpileModule(
+      generateBridge([moduleFixture({ name: "export", channels: [channelInfo] })]),
+      { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } },
+    );
+    const exports: { bridge?: { export: { run(input: string): IpcStream<string> } } } = {};
+    new Function("require", "exports", outputText)(() => ({ ipcRenderer }), exports);
+
+    return {
+      run: (input: string) => exports.bridge!.export.run(input),
+      ipcRenderer,
+      listenerCount: () => renderer.listenerCount("export:run:event"),
+    };
+  };
+
+  it("buffers chunks that arrive before next() and unsubscribes at the end", async () => {
+    const { run, listenerCount } = await wire({
+      run: stream(async function* (_event, input: string) {
+        yield `${input}-1`;
+        yield `${input}-2`;
+      }),
+    });
+
+    const chunks = run("in");
+    expect(listenerCount()).toBe(1);
+    await flush();
+
+    expect(await chunks.next()).toEqual({ done: false, value: "in-1" });
+    expect(await chunks.next()).toEqual({ done: false, value: "in-2" });
+    expect(await chunks.next()).toEqual({ done: true, value: undefined });
+    expect(listenerCount()).toBe(0);
+  });
+
+  it("sends cancel when for await breaks, and main runs the generator's finally", async () => {
+    const finalized = vi.fn();
+    const { run, ipcRenderer, listenerCount } = await wire({
+      run: stream(async function* () {
+        try {
+          for (let index = 0; ; index += 1) {
+            yield String(index);
+            await flush();
+          }
+        } finally {
+          finalized();
+        }
+      }),
+    });
+
+    const chunks = run("in");
+    const seen: string[] = [];
+    for await (const chunk of { [Symbol.asyncIterator]: () => chunks }) {
+      seen.push(chunk);
+      if (seen.length === 2) break;
+    }
+    await flush();
+
+    expect(seen).toEqual(["0", "1"]);
+    expect(ipcRenderer.send).toHaveBeenCalledWith("export:run:cancel", expect.any(String));
+    expect(finalized).toHaveBeenCalledOnce();
+    expect(listenerCount()).toBe(0);
+  });
+
+  it("settles a pending next() with done when cancel() is called", async () => {
+    const { run, listenerCount } = await wire({
+      run: stream(async function* () {
+        await new Promise(() => undefined);
+        yield "never";
+      }),
+    });
+
+    const chunks = run("in");
+    const pending = chunks.next();
+    chunks.cancel();
+
+    await expect(pending).resolves.toEqual({ done: true, value: undefined });
+    expect(listenerCount()).toBe(0);
+  });
+
+  it("rejects with the invoke error shape for generator and guard failures", async () => {
+    const failing = await wire({
+      run: stream(async function* () {
+        yield "first";
+        throw new Error("boom");
+      }),
+    });
+    const chunks = failing.run("in");
+    expect(await chunks.next()).toEqual({ done: false, value: "first" });
+    await expect(chunks.next()).rejects.toThrow(
+      "Error invoking remote method 'export:run': Error: boom",
+    );
+    expect(failing.listenerCount()).toBe(0);
+
+    const unauthorized = await wire({ run: stream(() => ["never"]) }, () => false);
+    await expect(unauthorized.run("in").next()).rejects.toThrow(
+      /Error invoking remote method 'export:run': IpcAuthorizationError/,
+    );
+    expect(unauthorized.listenerCount()).toBe(0);
+  });
 });
