@@ -213,6 +213,9 @@ export type TypedIpcMainInvokeEvent<TEmit extends IpcEventMap = AnyIpcEventMap> 
    * Aborts when the `WebContents` that initiated this invocation is destroyed.
    * Shared by every invocation from the same sender, and built on first read:
    * reading it needs a global `AbortController`, so Electron 15 or newer.
+   *
+   * In a `stream` callback it is per invocation instead, and also aborts when
+   * the renderer cancels that stream.
    */
   readonly signal: AbortSignal;
 };
@@ -231,8 +234,15 @@ export type IpcListener<
   TEmit extends IpcEventMap = AnyIpcEventMap,
 > = (e: TypedIpcMainEvent<TEmit>, ...args: TArgs) => MaybePromise<TResult>;
 
-/** The four channel flavors understood by {@link defineChannel}. */
-export type ChannelType = "handle" | "handleOnce" | "listen" | "listenOnce";
+/** Callback for a `stream` channel — each yielded value is sent to the caller. */
+export type IpcStreamHandler<
+  TArgs extends any[] = any[],
+  TYield = any,
+  TEmit extends IpcEventMap = AnyIpcEventMap,
+> = (e: TypedIpcMainInvokeEvent<TEmit>, ...args: TArgs) => AsyncIterable<TYield> | Iterable<TYield>;
+
+/** The channel flavors understood by {@link defineChannel}. */
+export type ChannelType = "handle" | "handleOnce" | "listen" | "listenOnce" | "stream";
 
 /** A request/response channel definition, from `handle` / `handleOnce`. */
 export type HandlerDef<
@@ -256,8 +266,40 @@ export type ListenerDef<
   once: boolean;
 };
 
+/** A streaming channel definition, from `stream`. */
+export type StreamDef<
+  TArgs extends any[] = any[],
+  TYield = any,
+  TEmit extends IpcEventMap = AnyIpcEventMap,
+> = {
+  kind: "stream";
+  fn: IpcStreamHandler<TArgs, TYield, TEmit>;
+  once: boolean;
+};
+
 /** A single channel definition produced by `handle`/`listen`/etc. */
-export type ChannelDef = HandlerDef | ListenerDef;
+export type ChannelDef = HandlerDef | ListenerDef | StreamDef;
+
+/**
+ * What a generated bridge method returns for a `stream` channel.
+ *
+ * Deliberately an iterator rather than an `AsyncIterable`: `contextBridge`
+ * drops symbol-keyed properties, so a `[Symbol.asyncIterator]` method would
+ * type-check in the renderer and then be missing there. Wrap it to `for await`:
+ *
+ * ```ts
+ * const run = window.ipc.export.run("in.mp4");
+ * for await (const chunk of { [Symbol.asyncIterator]: () => run }) { ... }
+ * ```
+ */
+export interface IpcStream<T> {
+  /** The next chunk; rejects with the stream's error, like a failed `invoke`. */
+  next(): Promise<IteratorResult<T, undefined>>;
+  /** Stop early, as `break` in `for await` does. Same as {@link IpcStream.cancel}. */
+  return(): Promise<IteratorResult<T, undefined>>;
+  /** Tell main to stop the stream, aborting its `event.signal`, and drop buffered chunks. */
+  cancel(): void;
+}
 
 /**
  * A channel definition, or an {@link IpcUncloneable} marker when its payload
@@ -267,7 +309,8 @@ export type ChannelDef = HandlerDef | ListenerDef;
  * rejects the channel where it is declared. Without this the mistake would only
  * surface in the generated bridge, far from the handler that caused it.
  *
- * `TResult` is checked for `handle`/`handleOnce` only. A `listen` callback's
+ * `TResult` is checked for `handle`/`handleOnce`, and is the yielded chunk type
+ * for `stream`. A `listen` callback's
  * return value is never sent back to the renderer, so it never gets cloned.
  */
 export type CloneableChannel<TDef, TArgs, TResult> =

@@ -82,9 +82,29 @@ retaining UI state.
 
 ## Report progress from long-running work
 
-Use an invoke for the final result and typed events for intermediate progress.
-Include a stable operation ID in every message so concurrent jobs cannot update
-the wrong view:
+When the renderer consumes results as they are produced, make the channel a
+`stream`. Each `yield` is the progress, and the generated bridge tags every
+message with a per-call id, so concurrent streams — from one window or several
+— never update the wrong view:
+
+```ts
+const exportReport = stream(async function* (event) {
+  for (const step of steps) {
+    if (event.signal.aborted) return;
+    yield await runStep(step);
+  }
+});
+```
+
+A stream's `event.signal` belongs to that one call: it aborts when the renderer
+cancels it or the calling `WebContents` is destroyed, and main then stops
+sending and calls the generator's `return()`, so its `finally` blocks run. A
+throw at any point rejects the renderer's next read with the
+[same error shape as a failed invoke](./error-contract.md).
+
+When the work must stay a single invoke, use it for the final result and typed
+events for intermediate progress. Include a stable operation ID in every message
+so concurrent jobs cannot update the wrong view:
 
 ```ts
 const exportReport = handle(async (event, jobId: string) => {
@@ -98,8 +118,9 @@ const exportReport = handle(async (event, jobId: string) => {
 });
 ```
 
-`event.signal` aborts when the calling `WebContents` is destroyed. It is shared
-by all invocations from that sender and remains valid after a handler settles.
+In a `handle` callback, `event.signal` aborts when the calling `WebContents` is
+destroyed. It is shared by all invocations from that sender and remains valid
+after a handler settles.
 It is cooperative: it does not interrupt work or settle the renderer's promise
 by itself. Check it before expensive steps.
 
@@ -159,8 +180,20 @@ manage their own listener; hand-registered ones are yours to remove.
 
 ## Let a live renderer cancel explicitly
 
-Closing a window aborts `event.signal`; pressing a Cancel button does not. Add a
-second channel when cancellation must work while the renderer stays alive:
+A `stream` has this built in. The renderer's `cancel()`, or a `break` out of its
+`for await`, aborts that call's `event.signal` and stops the generator; a cancel
+is only honoured from the window that started the stream, so another renderer
+that learns the id cannot stop it:
+
+```ts
+const run = window.ipc.export.run("in.mp4");
+cancelButton.onclick = () => run.cancel();
+for await (const chunk of { [Symbol.asyncIterator]: () => run }) render(chunk);
+```
+
+For a `handle` channel, closing a window aborts `event.signal`; pressing a Cancel
+button does not. Add a second channel when cancellation of invoke-style work must
+work while the renderer stays alive:
 
 ```ts
 const cancelled = new Set<string>();
@@ -193,7 +226,10 @@ renderer that knows an ID.
 A `WebContents` can survive a reload or in-place navigation. Such navigation
 abandons a pending renderer invocation without destroying the sender, so
 `event.signal` does not abort. If navigation must cancel work, connect the
-window's navigation lifecycle to application cancellation state.
+window's navigation lifecycle to application cancellation state. A stream is the
+same: its renderer-side iterator dies with the page, while main keeps producing
+until the generator ends, and the new page ignores the chunks because no
+listener holds that call's id.
 
 Conversely, a retained signal aborts even after its original handler has
 settled when the sender is eventually destroyed. Do not use it as an operation

@@ -4,6 +4,7 @@ This is a minimal Electron application with one typed IPC module. It demonstrate
 
 - `ipcRenderer.invoke` through `window.ipc.greeting.get()`
 - fire-and-forget renderer-to-main messages through `set()` and `notify()`
+- a cancellable `stream` channel through `countdown()`
 - typed main-to-renderer events with `event.sender.send()` and `event.reply()`
 - a generated, context-isolated preload bridge
 
@@ -22,7 +23,7 @@ pnpm start
 pnpm smoke
 ```
 
-[`smoke.ts`](./smoke.ts) is the same application with a hidden window and no user: it drives `window.ipc.greeting` through an `invoke`, a `send`, and both main-to-renderer event paths, then exits non-zero if any result is wrong. CI runs it, and it is the only place a real Electron process executes — the unit suite mocks Electron, so nothing else can catch the generator and the runtime disagreeing about a channel name.
+[`smoke.ts`](./smoke.ts) is the same application with a hidden window and no user: it drives `window.ipc.greeting` through an `invoke`, a `send`, both main-to-renderer event paths, and a stream that is read to the end and another that is cancelled, then exits non-zero if any result is wrong. CI runs it, and it is the only place a real Electron process executes — the unit suite mocks Electron, so nothing else can catch the generator and the runtime disagreeing about a channel name.
 
 Results come back through `webContents.executeJavaScript`, which travels over Chromium's debugger channel rather than over IPC, so the mechanism being tested is not also the one reporting the verdict. Each assertion has a timeout, because a channel-name mismatch shows up as an event that never arrives rather than as an error.
 

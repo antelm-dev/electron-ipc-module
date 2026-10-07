@@ -10,6 +10,7 @@ import {
   isCallToExportExpression,
   serializeType,
   unwrapAwaitedType,
+  unwrapIteratedType,
 } from "../shared/ts-utils.js";
 import type { AnalyzedIpcModule, ChannelInfo, EmittedEventInfo } from "../shared/types/bridge.js";
 import { resolveIpcPattern, toPosixPath } from "../shared/utils.js";
@@ -100,14 +101,21 @@ function serializeArgsType(
   return serializeNamedArgsType(checker, params, channelsArg);
 }
 
-/** Serialize a handler's awaited return type; listeners are always `any`. */
+/**
+ * Serialize a handler's awaited return type, or a stream's yielded chunk type;
+ * listeners are always `any`.
+ */
 function serializeReturnType(
   checker: ts.TypeChecker,
   signature: ts.Signature,
-  isHandler: boolean,
+  kind: string,
 ): string {
-  if (!isHandler) return "any";
   const rawReturn = signature.getReturnType();
+  if (kind === "stream") {
+    const chunk = unwrapIteratedType(checker, rawReturn);
+    return chunk ? serializeType(checker, chunk) : "any";
+  }
+  if (kind !== "handler") return "any";
   const inner = unwrapAwaitedType(checker, rawReturn);
   return serializeType(checker, inner);
 }
@@ -128,6 +136,8 @@ function extractChannelInfo(
   const kindType = checker.getTypeOfSymbolAtLocation(kindProp, channelsArg);
   const kindStr = checker.typeToString(kindType).replaceAll('"', "");
   const isHandler = kindStr === "handler";
+  // Only set for streams, so the analysis of every other channel is unchanged.
+  const streamFlag = kindStr === "stream" ? { isStream: true } : {};
 
   const fnProp = propType.getProperty("fn");
   if (!fnProp) return null;
@@ -138,6 +148,7 @@ function extractChannelInfo(
     return {
       key: channelName,
       isHandler,
+      ...streamFlag,
       argsType: null,
       returnType: "any",
     };
@@ -147,8 +158,9 @@ function extractChannelInfo(
   return {
     key: channelName,
     isHandler,
+    ...streamFlag,
     argsType: serializeArgsType(checker, signature, channelsArg),
-    returnType: serializeReturnType(checker, signature, isHandler),
+    returnType: serializeReturnType(checker, signature, kindStr),
   };
 }
 

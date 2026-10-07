@@ -47,11 +47,16 @@ export interface ResolvedIpcBridgeOptions {
 export interface ChannelInfo {
   /** Channel key (before prefixing), e.g. `"get-all"`. */
   key: string;
-  /** `true` for `handle`/`handleOnce`, `false` for `listen`/`listenOnce`. */
+  /** `true` for `handle`/`handleOnce`, `false` for `listen`/`listenOnce`/`stream`. */
   isHandler: boolean;
+  /** `true` for `stream`, which generates an `IpcStream` method. */
+  isStream?: boolean;
   /** Serialized argument tuple type, or `null` when there are no args. */
   argsType: string | null;
-  /** Serialized (awaited) return type; `"any"` for listeners. */
+  /**
+   * Serialized (awaited) return type; the yielded chunk type for streams;
+   * `"any"` for listeners.
+   */
   returnType: string;
 }
 

@@ -28,6 +28,7 @@ describe("extractModules", () => {
       "duplicate-events",
       "factory",
       "namespaced",
+      "stream",
       "typed-args",
     ]);
   });
@@ -76,6 +77,30 @@ describe("extractModules", () => {
         expect.objectContaining({ key: "regularListen", isHandler: false }),
       ]),
     );
+  });
+
+  it("classifies stream channels and records the yielded chunk type", () => {
+    const streams = analyzeFixtureModules().find((module) => module.name === "stream");
+
+    expect(streams?.channels).toEqual([
+      {
+        key: "render",
+        isHandler: false,
+        isStream: true,
+        argsType: "[input: string]",
+        returnType: "{ index: number; input: string; }",
+      },
+      { key: "lines", isHandler: false, isStream: true, argsType: null, returnType: "string" },
+      { key: "dates", isHandler: false, isStream: true, argsType: null, returnType: "Date" },
+      {
+        key: "ticks",
+        isHandler: false,
+        isStream: true,
+        argsType: "[count: number]",
+        returnType: "number",
+      },
+      { key: "ping", isHandler: false, isStream: true, argsType: null, returnType: "number" },
+    ]);
   });
 
   it("serializes optional, rest, and async handler signatures", () => {
