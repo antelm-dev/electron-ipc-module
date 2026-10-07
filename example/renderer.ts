@@ -29,3 +29,12 @@ document.querySelector("#set-greeting")!.addEventListener("click", () => {
 document.querySelector("#send-notice")!.addEventListener("click", () => {
   window.ipc.greeting.notify(notice.value);
 });
+
+document.querySelector("#countdown")!.addEventListener("click", async () => {
+  // contextBridge drops symbol keys, so wrap the returned iterator to `for await` it.
+  const countdown = window.ipc.greeting.countdown(3);
+  for await (const count of { [Symbol.asyncIterator]: () => countdown }) {
+    status.textContent = `Countdown: ${count}`;
+  }
+  status.textContent = "Countdown finished.";
+});

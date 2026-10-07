@@ -15,13 +15,16 @@ import type {
   HandlerDef,
   IpcEventMap,
   IpcEmitter,
+  IpcCleanup,
   IpcHandler,
   IpcListener,
+  IpcStreamHandler,
   ListenerDef,
   IpcModuleCleanup,
   IpcModuleRegister,
   IpcModuleRegistration,
   MaybePromise,
+  StreamDef,
 } from "../shared/types/runtime.js";
 
 export type {
@@ -40,14 +43,16 @@ export type {
 } from "../shared/types/runtime.js";
 
 /**
- * Wrap a handler/listener function into a channel definition tagged with its
- * kind (`handler` vs `listener`) and whether it should only fire `once`.
+ * Wrap a handler/listener/stream function into a channel definition tagged
+ * with its kind (`handler`, `listener`, or `stream`) and whether it should only
+ * fire `once`.
  *
  * Prefer the {@link createIpcHelpers} helpers (`handle`, `listen`, …) over
  * calling this directly — they preset the `type` argument for you.
  *
- * @param type - One of `handle`, `handleOnce`, `listen`, `listenOnce`.
- * @param fn - The handler (for `handle*`) or listener (for `listen*`) callback.
+ * @param type - One of `handle`, `handleOnce`, `listen`, `listenOnce`, `stream`.
+ * @param fn - The handler (for `handle*`), listener (for `listen*`), or
+ * iterable-returning callback (for `stream`).
  */
 export function defineChannel<
   T extends ChannelType,
@@ -56,17 +61,23 @@ export function defineChannel<
   TEmit extends IpcEventMap = Record<string, any[]>,
 >(
   type: T,
-  fn: T extends "handle" | "handleOnce"
-    ? IpcHandler<TArgs, TResult, TEmit>
-    : IpcListener<TArgs, TResult, TEmit>,
+  // `stream` is tested first: inference reads every branch, and a handler's
+  // `MaybePromise<TResult>` would otherwise claim a generator as the result.
+  fn: T extends "stream"
+    ? IpcStreamHandler<TArgs, TResult, TEmit>
+    : T extends "handle" | "handleOnce"
+      ? IpcHandler<TArgs, TResult, TEmit>
+      : IpcListener<TArgs, TResult, TEmit>,
 ) {
   return {
     fn,
-    kind: type.startsWith("handle") ? "handler" : "listener",
+    kind: type === "stream" ? "stream" : type.startsWith("handle") ? "handler" : "listener",
     once: type.endsWith("Once"),
   } as T extends "handle" | "handleOnce"
     ? HandlerDef<TArgs, TResult, TEmit>
-    : ListenerDef<TArgs, TResult, TEmit>;
+    : T extends "stream"
+      ? StreamDef<TArgs, TResult, TEmit>
+      : ListenerDef<TArgs, TResult, TEmit>;
 }
 
 /** Options accepted by {@link defineIpcModule}. */
@@ -367,6 +378,23 @@ function wrapSendTarget<T extends object>(target: T, eventPrefix: string | undef
 const senderSignals = new WeakMap<WebContents, AbortSignal>();
 
 /**
+ * A new `AbortController`, or an explanation of why there is none.
+ *
+ * `AbortController` only became an unflagged global in Node 15, which Electron
+ * ships from 15.0.0, so every caller builds one lazily: channels that never
+ * touch `event.signal` keep working on the declared peer floor of Electron 12.
+ */
+function createAbortController(): AbortController {
+  if (typeof AbortController === "undefined") {
+    throw new Error(
+      "event.signal requires a global AbortController, which Electron ships from 15.0.0 (Node 16). " +
+        "Every other channel feature still runs on the declared peer floor of Electron 12.",
+    );
+  }
+  return new AbortController();
+}
+
+/**
  * The lifecycle {@link AbortSignal} for a sender, aborted once it is destroyed.
  *
  * Cached per `WebContents` rather than per invocation: destruction is terminal,
@@ -375,22 +403,13 @@ const senderSignals = new WeakMap<WebContents, AbortSignal>();
  * invocations are in flight.
  *
  * Built on first read rather than on every invocation, so the declared peer
- * floor of Electron 12 keeps working: `AbortController` only became an
- * unflagged global in Node 15, which Electron ships from 15.0.0. Handlers that
- * never touch `event.signal` never construct one.
+ * floor of Electron 12 keeps working — see {@link createAbortController}.
  */
 function senderSignal(sender: WebContents): AbortSignal {
   const cached = senderSignals.get(sender);
   if (cached) return cached;
 
-  if (typeof AbortController === "undefined") {
-    throw new Error(
-      "event.signal requires a global AbortController, which Electron ships from 15.0.0 (Node 16). " +
-        "Every other channel feature still runs on the declared peer floor of Electron 12.",
-    );
-  }
-
-  const controller = new AbortController();
+  const controller = createAbortController();
   if (sender.isDestroyed()) controller.abort();
   else sender.once("destroyed", () => controller.abort());
 
@@ -398,14 +417,169 @@ function senderSignal(sender: WebContents): AbortSignal {
   return controller.signal;
 }
 
+/**
+ * Stop callbacks for the streams each sender has in flight.
+ *
+ * One `destroyed` listener per sender however many streams it runs, for the
+ * same `EventEmitter` cap {@link senderSignal} stays under — and built on
+ * `destroyed` rather than on a signal, so a stream still stops on Electron 12.
+ */
+const senderStreams = new WeakMap<WebContents, Set<() => void>>();
+
+/** Run `stop` once `sender` is destroyed. Returns the callback that untracks it. */
+function trackSenderStream(sender: WebContents, stop: () => void): () => void {
+  let stops = senderStreams.get(sender);
+  if (!stops) {
+    const created = new Set<() => void>();
+    sender.once("destroyed", () => created.forEach((stopStream) => stopStream()));
+    senderStreams.set(sender, created);
+    stops = created;
+  }
+  stops.add(stop);
+  return () => stops.delete(stop);
+}
+
+/**
+ * Register a `stream` channel: the start handler on `channel`, a cancel
+ * listener on `channel:cancel`, and `channel:event` — renderer-bound, so it has
+ * nothing to remove, but listed so collision detection and `getChannels` see it.
+ * Each cleanup is pushed to `registered` as soon as its channel is attached, so
+ * a failure part-way through is still rolled back.
+ *
+ * Each call carries a renderer-chosen id. Main answers on `channel:event` with
+ * `(id, "chunk", value)`, then exactly one `(id, "end")` or `(id, "error",
+ * message)` — unless the stream is stopped first by a cancel, or by the sender
+ * being destroyed, in which case nothing more is sent. The start invoke itself
+ * settles once the guards pass, so `authorize` and `validate` failures reject it
+ * exactly as they reject a `handle` channel.
+ */
+function registerStream(
+  ipc: IpcMain,
+  { channel }: IpcChannelContext,
+  start: (
+    event: IpcMainInvokeEvent,
+    args: unknown[],
+    signal: () => AbortSignal,
+  ) => MaybePromise<unknown>,
+  registered: IpcCleanup[],
+): void {
+  const cancelChannel = `${channel}:cancel`;
+  const eventChannel = `${channel}:event`;
+  const active = new Map<string, { sender: WebContents; stop: () => void }>();
+
+  const onStart = async (event: IpcMainInvokeEvent, id: unknown, ...args: unknown[]) => {
+    if (typeof id !== "string" || active.has(id)) {
+      throw new TypeError(`IPC stream ${JSON.stringify(channel)} needs a unique string call id`);
+    }
+    const { sender } = event;
+    if (isGone(sender)) return;
+
+    let controller: AbortController | undefined;
+    let iterator: Iterator<unknown> | AsyncIterator<unknown> | undefined;
+    let stopped = false;
+    let closed = false;
+
+    // Run the generator's `finally` blocks. Calling `return()` while an async
+    // generator is mid-`await` is queued, and completes at its next `yield`.
+    const close = async () => {
+      if (closed || !iterator) return;
+      closed = true;
+      try {
+        await iterator.return?.();
+      } catch (error) {
+        console.error(
+          `[electron-ipc-module] Stream cleanup failed for ${JSON.stringify(channel)}`,
+          error,
+        );
+      }
+    };
+    const release = () => {
+      active.delete(id);
+      untrack();
+    };
+    const stop = () => {
+      if (stopped) return;
+      stopped = true;
+      release();
+      controller?.abort();
+      void close();
+    };
+    const send = (...message: unknown[]) => {
+      if (!stopped && !isGone(sender)) sender.send(eventChannel, id, ...message);
+    };
+    const signal = () => {
+      if (!controller) {
+        controller = createAbortController();
+        if (stopped) controller.abort();
+      }
+      return controller.signal;
+    };
+
+    const untrack = trackSenderStream(sender, stop);
+    active.set(id, { sender, stop });
+
+    let iterable: unknown;
+    try {
+      iterable = await start(event, args, signal);
+    } catch (error) {
+      release();
+      throw error;
+    }
+    if (stopped) return;
+
+    void (async () => {
+      let done = false;
+      try {
+        const source = iterable as AsyncIterable<unknown> & Iterable<unknown>;
+        iterator =
+          typeof source?.[Symbol.asyncIterator] === "function"
+            ? source[Symbol.asyncIterator]()
+            : source[Symbol.iterator]();
+        for (;;) {
+          const result = await iterator.next();
+          if (stopped) break;
+          if (result.done) {
+            done = true;
+            send("end");
+            break;
+          }
+          send("chunk", result.value);
+          // A ready chunk only advances microtasks; yield a macrotask so a
+          // queued cancel or `destroyed` event can stop a fast or endless stream.
+          await new Promise((resolve) => setImmediate(resolve));
+          if (stopped) break;
+        }
+      } catch (error) {
+        // Electron surfaces a failed invoke as the error's string form; match it.
+        send("error", String(error));
+      } finally {
+        if (!done) void close();
+        release();
+      }
+    })();
+  };
+
+  const onCancel = (event: IpcMainEvent, id: unknown) => {
+    const stream = typeof id === "string" ? active.get(id) : undefined;
+    // Only the window that started a stream may cancel it.
+    if (stream?.sender === event.sender) stream.stop();
+  };
+
+  ipc.handle(channel, onStart);
+  registered.push([channel, () => ipc.removeHandler(channel)]);
+  ipc.on(cancelChannel, onCancel);
+  registered.push([cancelChannel, () => ipc.removeListener(cancelChannel, onCancel)]);
+  registered.push([eventChannel, () => undefined]);
+}
+
 function wrapEvent<T extends IpcMainEvent | IpcMainInvokeEvent>(
   event: T,
   eventPrefix: string | undefined,
-  lifecycleSignal = false,
+  signal?: () => AbortSignal,
 ): T {
   return new Proxy(event, {
     get(object, property) {
-      if (lifecycleSignal && property === "signal") return senderSignal(object.sender);
+      if (signal && property === "signal") return signal();
       if (property === "sender") {
         return object.sender ? wrapSendTarget(object.sender, eventPrefix) : object.sender;
       }
@@ -463,27 +637,27 @@ export function defineIpcModule<TChannels extends Record<string, ChannelDef>>(
         const callUserFunction = (
           event: IpcMainEvent | IpcMainInvokeEvent,
           args: unknown[],
-          lifecycleSignal?: boolean,
-        ) => def.fn(wrapEvent(event, eventPrefix, lifecycleSignal) as never, ...args);
+          signal?: () => AbortSignal,
+        ) => def.fn(wrapEvent(event, eventPrefix, signal) as never, ...args);
         const runGuarded = async (
           event: IpcMainEvent | IpcMainInvokeEvent,
           args: unknown[],
-          lifecycleSignal?: boolean,
+          signal?: () => AbortSignal,
         ): Promise<unknown> => {
           if ((await authorize?.(event, context)) === false) {
             throw new IpcAuthorizationError(channel);
           }
           const validated = validator ? await runValidator(validator, args, event, context) : args;
-          return callUserFunction(event, validated, lifecycleSignal);
+          return callUserFunction(event, validated, signal);
         };
+        const invoke = authorize || validator ? runGuarded : callUserFunction;
 
         let fn: (...args: any[]) => any;
-        if (def.kind === "handler") {
-          fn =
-            authorize || validator
-              ? (event: IpcMainInvokeEvent, ...args: unknown[]) => runGuarded(event, args, true)
-              : (event: IpcMainInvokeEvent, ...args: unknown[]) =>
-                  callUserFunction(event, args, true);
+        if (def.kind === "stream") {
+          registerStream(ipc, context, invoke, registered);
+        } else if (def.kind === "handler") {
+          fn = (event: IpcMainInvokeEvent, ...args: unknown[]) =>
+            invoke(event, args, () => senderSignal(event.sender));
 
           if (def.once) ipc.handleOnce(channel, fn);
           else ipc.handle(channel, fn);
@@ -492,11 +666,6 @@ export function defineIpcModule<TChannels extends Record<string, ChannelDef>>(
         } else {
           // Every listener is wrapped, prefix or not: `event.sender.send` and
           // `event.reply` need the destroyed-sender guard as much as handlers do.
-          const invoke =
-            authorize || validator
-              ? (event: IpcMainEvent, args: unknown[]) => runGuarded(event, args)
-              : (event: IpcMainEvent, args: unknown[]) => callUserFunction(event, args);
-
           fn = (event: IpcMainEvent, ...args: unknown[]) => {
             const onError = (error: unknown) =>
               reportListenerError(error, context, event, onListenerError);
@@ -560,8 +729,8 @@ export function defineIpcEvents<TEvents extends IpcEventMap>(): TEvents {
 }
 
 /**
- * Build `handle` / `handleOnce` / `listen` / `listenOnce` helpers bound to a
- * specific emitted-event map `TEmit`.
+ * Build `handle` / `handleOnce` / `listen` / `listenOnce` / `stream` helpers
+ * bound to a specific emitted-event map `TEmit`.
  *
  * The `TEmit` type flows into `event.reply`, `event.sender.send`, and
  * `event.senderFrame?.send` inside each callback, giving fully typed emits.
@@ -611,6 +780,20 @@ export function createIpcHelpers<TEmit extends IpcEventMap>() {
     ): CloneableChannel<ListenerDef<TArgs, TResult, TEmit>, TArgs, unknown> {
       return defineChannel("listenOnce", fn) as never;
     },
+
+    /**
+     * Register a streaming channel: every value the returned (async) iterable
+     * yields is sent to the renderer as one chunk, in order.
+     *
+     * `event.signal` is per invocation here, and aborts when the renderer
+     * cancels the stream or its `WebContents` is destroyed. Either way the
+     * iterator's `return()` runs, so a generator's `finally` blocks execute.
+     */
+    stream<TArgs extends any[] = any[], TYield = any>(
+      fn: IpcStreamHandler<TArgs, TYield, TEmit>,
+    ): CloneableChannel<StreamDef<TArgs, TYield, TEmit>, TArgs, TYield> {
+      return defineChannel<"stream", TArgs, TYield, TEmit>("stream", fn) as never;
+    },
   };
 }
 
@@ -618,4 +801,4 @@ export function createIpcHelpers<TEmit extends IpcEventMap>() {
  * Default, untyped channel helpers. Use {@link createIpcHelpers} instead when
  * you want typed emitted events.
  */
-export const { handle, handleOnce, listen, listenOnce } = createIpcHelpers();
+export const { handle, handleOnce, listen, listenOnce, stream } = createIpcHelpers();

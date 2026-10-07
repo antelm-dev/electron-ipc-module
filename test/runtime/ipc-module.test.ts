@@ -9,9 +9,11 @@ import {
   handleOnce,
   listen,
   listenOnce,
+  stream,
   IpcAuthorizationError,
   IpcValidationError,
 } from "../../src/runtime/ipc-module.js";
+import { createIpcContainer, IpcChannelCollisionError } from "../../src/runtime/ipc-container.js";
 import { BrowserWindow } from "electron";
 import { beforeEach, vi, describe, it, expect } from "vitest";
 
@@ -1085,5 +1087,464 @@ describe("defineIpcEvents", () => {
     // The bridge generator reads its type argument; the value must stay inert
     // so nothing is tempted to depend on it at runtime.
     expect(defineIpcEvents<{ changed: [value: string] }>()).toEqual({});
+  });
+});
+
+describe("defineIpcModule stream channels", () => {
+  /** Let a stream's pump run until it has nothing left to do. */
+  // The pump yields one `setImmediate` per chunk, so drain enough turns for any
+  // stream these tests run rather than racing a single timer.
+  const flush = async () => {
+    for (let turn = 0; turn < 20; turn += 1) await new Promise((resolve) => setImmediate(resolve));
+  };
+
+  const setup = async (
+    channels: Parameters<typeof defineIpcModule>[1],
+    options?: Parameters<typeof defineIpcModule>[2],
+  ) => {
+    const { handlers, listeners, ipc } = createIpc();
+    const registration = await defineIpcModule("export", channels, options)(ipc as never);
+    const sender = createInvokeSender();
+    const start = (id: unknown, ...args: unknown[]) =>
+      handlers.get("export:run")?.(createInvokeEvent(sender), id, ...args);
+    const cancel = (id: string, from: object = sender) =>
+      listeners.get("export:run:cancel")?.({ sender: from }, id);
+    const messages = (id: string) =>
+      sender.send.mock.calls
+        .filter(([channel, callId]) => channel === "export:run:event" && callId === id)
+        .map(([, , ...message]) => message);
+    return { registration, ipc, sender, start, cancel, messages };
+  };
+
+  it("registers the start, cancel, and renderer-bound event channels", async () => {
+    const { registration, ipc } = await setup({ run: stream(() => []) });
+
+    expect(registration.channels.map(([channel]) => channel)).toEqual([
+      "export:run",
+      "export:run:cancel",
+      "export:run:event",
+    ]);
+    expect(ipc.handle).toHaveBeenCalledWith("export:run", expect.any(Function));
+    expect(ipc.on).toHaveBeenCalledWith("export:run:cancel", expect.any(Function));
+
+    registration.channels.forEach(([, cleanup]) => cleanup());
+    expect(ipc.removeHandler).toHaveBeenCalledWith("export:run");
+    expect(ipc.removeListener).toHaveBeenCalledWith("export:run:cancel", expect.any(Function));
+  });
+
+  it("rolls back the start handler when the cancel listener fails to attach", async () => {
+    const { ipc } = createIpc();
+    ipc.on.mockImplementationOnce(() => {
+      throw new Error("attach failed");
+    });
+
+    await expect(
+      defineIpcModule("export", { run: stream(() => []) })(ipc as never),
+    ).rejects.toThrow("attach failed");
+    expect(ipc.removeHandler).toHaveBeenCalledWith("export:run");
+  });
+
+  it("sends each chunk in order with the call id, then end", async () => {
+    const { start, messages } = await setup({
+      run: stream(async function* (_event, input: string) {
+        yield `${input}-1`;
+        yield `${input}-2`;
+      }),
+    });
+
+    await expect(start("a", "in")).resolves.toBeUndefined();
+    await flush();
+
+    expect(messages("a")).toEqual([["chunk", "in-1"], ["chunk", "in-2"], ["end"]]);
+  });
+
+  it("lets a cancel interrupt an endless synchronous iterable", async () => {
+    const finalized = vi.fn();
+    const { start, cancel, messages } = await setup({
+      run: stream(function* () {
+        try {
+          for (let index = 0; ; index += 1) yield index;
+        } finally {
+          finalized();
+        }
+      }),
+    });
+
+    await start("a");
+    setImmediate(() => cancel("a"));
+    await flush();
+    await flush();
+
+    const sent = messages("a");
+    expect(sent.length).toBeGreaterThan(0);
+    expect(sent.length).toBeLessThan(10);
+    expect(sent[sent.length - 1][0]).toBe("chunk");
+    expect(finalized).toHaveBeenCalledOnce();
+  });
+
+  it("streams a synchronous iterable", async () => {
+    const { start, messages } = await setup({ run: stream(() => [1, 2]) });
+
+    await start("a");
+    await flush();
+
+    expect(messages("a")).toEqual([["chunk", 1], ["chunk", 2], ["end"]]);
+  });
+
+  it.each([
+    [
+      "before the first yield",
+      // oxlint-disable-next-line require-yield
+      async function* () {
+        throw new Error("boom");
+      },
+      [["error", "Error: boom"]],
+    ],
+    [
+      "mid-stream",
+      async function* () {
+        yield 1;
+        throw new Error("boom");
+      },
+      [
+        ["chunk", 1],
+        ["error", "Error: boom"],
+      ],
+    ],
+    [
+      "when the callback returns no iterable",
+      () => 42 as never,
+      [["error", expect.stringContaining("TypeError")]],
+    ],
+  ])("sends an error message for a failure %s", async (_label, fn, expected) => {
+    const { start, messages } = await setup({ run: stream(fn) });
+
+    await start("a");
+    await flush();
+
+    expect(messages("a")).toEqual(expected);
+  });
+
+  it("sends an error when a chunk cannot be sent, and still runs finally", async () => {
+    const finalized = vi.fn();
+    const { start, sender, messages } = await setup({
+      run: stream(async function* () {
+        try {
+          yield 1;
+          yield 2;
+        } finally {
+          finalized();
+        }
+      }),
+    });
+    sender.send.mockImplementationOnce(() => {
+      throw new Error("An object could not be cloned.");
+    });
+
+    await start("a");
+    await flush();
+
+    // The first chunk was attempted and threw; the error replaces it.
+    expect(messages("a")).toEqual([
+      ["chunk", 1],
+      ["error", "Error: An object could not be cloned."],
+    ]);
+    expect(finalized).toHaveBeenCalledOnce();
+  });
+
+  it("aborts the signal, runs finally, and stops sending on cancel", async () => {
+    const finalized = vi.fn();
+    let signal: AbortSignal | undefined;
+    let release: () => void = () => undefined;
+    const { start, cancel, messages } = await setup({
+      run: stream(async function* (event) {
+        signal = event.signal;
+        try {
+          yield 1;
+          await new Promise<void>((resolve) => (release = resolve));
+          yield 2;
+        } finally {
+          finalized();
+        }
+      }),
+    });
+
+    await start("a");
+    await flush();
+    expect(messages("a")).toEqual([["chunk", 1]]);
+
+    cancel("a");
+    expect(signal?.aborted).toBe(true);
+    release();
+    await flush();
+
+    expect(finalized).toHaveBeenCalledOnce();
+    expect(messages("a")).toEqual([["chunk", 1]]);
+  });
+
+  it("ignores a cancel from a different sender or for an unknown id", async () => {
+    let signal: AbortSignal | undefined;
+    let release: () => void = () => undefined;
+    const { start, cancel, messages } = await setup({
+      run: stream(async function* (event) {
+        signal = event.signal;
+        await new Promise<void>((resolve) => (release = resolve));
+        yield 1;
+      }),
+    });
+
+    await start("a");
+    await flush();
+    cancel("a", createInvokeSender());
+    cancel("unknown");
+    expect(signal?.aborted).toBe(false);
+
+    release();
+    await flush();
+    expect(messages("a")).toEqual([["chunk", 1], ["end"]]);
+  });
+
+  it("stops the stream when the sender is destroyed", async () => {
+    const finalized = vi.fn();
+    let signal: AbortSignal | undefined;
+    const { start, sender, messages } = await setup({
+      run: stream(async function* (event) {
+        signal = event.signal;
+        try {
+          for (let index = 0; ; index += 1) {
+            yield index;
+            await flush();
+          }
+        } finally {
+          finalized();
+        }
+      }),
+    });
+
+    await start("a");
+    await flush();
+    sender.destroy();
+    const sent = messages("a").length;
+    await flush();
+    await flush();
+
+    expect(signal?.aborted).toBe(true);
+    expect(finalized).toHaveBeenCalledOnce();
+    expect(messages("a")).toHaveLength(sent);
+    expect(messages("a")).not.toContainEqual(["end"]);
+  });
+
+  it("does not start for a sender that is already destroyed", async () => {
+    const fn = vi.fn(() => []);
+    const { start, sender } = await setup({ run: stream(fn) });
+    sender.destroy();
+
+    await expect(start("a")).resolves.toBeUndefined();
+    expect(fn).not.toHaveBeenCalled();
+  });
+
+  it("rejects the start invoke when authorize or validate fails", async () => {
+    const fn = vi.fn(() => []);
+    const unauthorized = await setup({ run: stream(fn) }, { authorize: () => false });
+    await expect(unauthorized.start("a")).rejects.toBeInstanceOf(IpcAuthorizationError);
+
+    const invalid = await setup(
+      { run: stream(fn) },
+      { validate: { run: schemaOf(() => ({ issues: [{ message: "bad input" }] })) } },
+    );
+    await expect(invalid.start("a", 1)).rejects.toBeInstanceOf(IpcValidationError);
+
+    expect(fn).not.toHaveBeenCalled();
+    expect(unauthorized.messages("a")).toEqual([]);
+    // A rejected start leaves no state behind, so the id is free again.
+    await expect(unauthorized.start("a")).rejects.toBeInstanceOf(IpcAuthorizationError);
+  });
+
+  it("does not run a stream cancelled while authorize is pending", async () => {
+    let allow: (value: boolean) => void = () => undefined;
+    let signal: AbortSignal | undefined;
+    const body = vi.fn();
+    const { start, cancel, messages } = await setup(
+      {
+        run: stream((event) => {
+          signal = event.signal;
+          return { [Symbol.iterator]: body };
+        }),
+      },
+      { authorize: () => new Promise<boolean>((resolve) => (allow = resolve)) },
+    );
+
+    const started = start("a");
+    cancel("a");
+    allow(true);
+    await started;
+    await flush();
+
+    // A signal first read after the cancel is born aborted.
+    expect(signal?.aborted).toBe(true);
+    expect(body).not.toHaveBeenCalled();
+    expect(messages("a")).toEqual([]);
+  });
+
+  it("validates only the start arguments, not the call id", async () => {
+    const validate = vi.fn();
+    const { start, messages } = await setup(
+      { run: stream((_event, input: string) => [input]) },
+      { validate: { run: validate } },
+    );
+
+    await start("a", "in");
+    await flush();
+
+    expect(validate).toHaveBeenCalledWith(["in"], expect.anything(), expect.anything());
+    expect(messages("a")).toEqual([["chunk", "in"], ["end"]]);
+  });
+
+  it("rejects a missing or duplicate call id", async () => {
+    const { start } = await setup({
+      run: stream(async function* () {
+        await new Promise(() => undefined);
+        yield 1;
+      }),
+    });
+
+    await expect(start(undefined)).rejects.toThrow("needs a unique string call id");
+    await start("a");
+    await expect(start("a")).rejects.toThrow("needs a unique string call id");
+  });
+
+  it("keeps concurrent invocations from one sender independent", async () => {
+    const signals = new Map<string, AbortSignal>();
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const { start, cancel, messages, sender } = await setup({
+      run: stream(async function* (event, name: string) {
+        signals.set(name, event.signal);
+        yield name;
+        await gate;
+        yield name;
+      }),
+    });
+
+    await start("a", "first");
+    await start("b", "second");
+    await flush();
+    cancel("a");
+    release();
+    await flush();
+
+    expect(signals.get("first")).not.toBe(signals.get("second"));
+    expect(signals.get("first")?.aborted).toBe(true);
+    expect(signals.get("second")?.aborted).toBe(false);
+    expect(messages("b")).toEqual([["chunk", "second"], ["chunk", "second"], ["end"]]);
+    expect(messages("a")).toEqual([["chunk", "first"]]);
+    // One destroyed listener for every stream from this sender.
+    expect(sender.listenerCount("destroyed")).toBe(1);
+  });
+
+  it("releases per-call state once a stream completes", async () => {
+    const finalized = vi.fn();
+    const { start, cancel, sender, messages } = await setup({
+      run: stream(function* () {
+        try {
+          yield 1;
+        } finally {
+          finalized();
+        }
+      }),
+    });
+
+    await start("a");
+    await flush();
+    expect(finalized).toHaveBeenCalledOnce();
+
+    // A late cancel or destruction finds nothing to stop, and the id is free.
+    cancel("a");
+    sender.destroy();
+    expect(finalized).toHaveBeenCalledOnce();
+    expect(messages("a")).toEqual([["chunk", 1], ["end"]]);
+  });
+
+  it("runs on a runtime without AbortController when the signal is unused", async () => {
+    const original = globalThis.AbortController;
+    // @ts-expect-error Simulating a Node 14 runtime, where the global is absent.
+    delete globalThis.AbortController;
+    try {
+      const finalized = vi.fn();
+      let release: () => void = () => undefined;
+      const { start, cancel, messages } = await setup({
+        run: stream(async function* () {
+          try {
+            yield 1;
+            await new Promise<void>((resolve) => (release = resolve));
+            yield 2;
+          } finally {
+            finalized();
+          }
+        }),
+      });
+
+      await start("a");
+      await flush();
+      cancel("a");
+      release();
+      await flush();
+
+      expect(finalized).toHaveBeenCalledOnce();
+      expect(messages("a")).not.toContainEqual(["end"]);
+    } finally {
+      globalThis.AbortController = original;
+    }
+  });
+
+  it("logs a cleanup failure instead of rejecting unhandled", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    let release: () => void = () => undefined;
+    const { start, cancel } = await setup({
+      run: stream(async function* () {
+        try {
+          yield 1;
+          await new Promise<void>((resolve) => (release = resolve));
+          yield 2;
+        } finally {
+          // oxlint-disable-next-line no-unsafe-finally
+          throw new Error("cleanup broke");
+        }
+      }),
+    });
+
+    await start("a");
+    await flush();
+    cancel("a");
+    release();
+    await flush();
+
+    expect(consoleError).toHaveBeenCalledWith(
+      '[electron-ipc-module] Stream cleanup failed for "export:run"',
+      expect.objectContaining({ message: "cleanup broke" }),
+    );
+  });
+
+  it("puts the derived channels under the container's collision detection", async () => {
+    const { ipc } = createIpc();
+    const container = createIpcContainer();
+    await container.load(
+      "export",
+      defineIpcModule("export", { run: stream(() => []) }),
+      ipc as never,
+    );
+
+    expect(container.getChannels("export")).toEqual([
+      "export:run",
+      "export:run:cancel",
+      "export:run:event",
+    ]);
+    await expect(
+      container.load(
+        "other",
+        defineIpcModule("export", { "run:event": listen(() => undefined) }),
+        ipc as never,
+      ),
+    ).rejects.toBeInstanceOf(IpcChannelCollisionError);
   });
 });

@@ -36,11 +36,27 @@ const DRIVE_BRIDGE = `(async () => {
   );
   window.ipc.greeting.notify("ping");
 
+  const countdown = window.ipc.greeting.countdown(3);
+  const counted = withTimeout(
+    (async () => {
+      const counts = [];
+      for await (const count of { [Symbol.asyncIterator]: () => countdown }) counts.push(count);
+      return counts.join(",");
+    })(),
+    "the countdown stream",
+  );
+
+  const cancelled = window.ipc.greeting.countdown(100);
+  await withTimeout(cancelled.next(), "the first chunk of a stream to cancel");
+  cancelled.cancel();
+
   return {
     greeting,
     changed: await changed,
     notice: await notice,
     afterSet: await withTimeout(window.ipc.greeting.get(), "greeting:get after set"),
+    counted: await counted,
+    cancelled: String((await cancelled.next()).done),
   };
 })()`;
 
@@ -54,6 +70,10 @@ const EXPECTED: Record<string, string> = {
   notice: "Main received: ping",
   // the handler observes state the listener mutated, so both reached main
   afterSet: "Hello, Ada!",
+  // stream -> chunks over greeting:countdown:event, through contextBridge
+  counted: "3,2,1",
+  // cancel() settles the stream in the renderer
+  cancelled: "true",
 };
 
 async function run() {

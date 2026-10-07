@@ -14,11 +14,13 @@ import {
   IpcObserverError,
   listen,
   listenOnce,
+  stream,
   type ChannelDef,
   type ChannelType,
   type CloneableChannel,
   type HandlerDef,
   type ListenerDef,
+  type StreamDef,
   type DefineIpcModuleOptions,
   type IpcChannelContext,
   type IpcChannelValidator,
@@ -29,6 +31,8 @@ import {
   type IpcEmitter,
   type IpcHandler,
   type IpcListener,
+  type IpcStream,
+  type IpcStreamHandler,
   type IpcModuleCleanup,
   type IpcModuleRegister,
   type IpcModuleRegistration,
@@ -140,6 +144,22 @@ handle(() => undefined);
 handleOnce(() => undefined);
 listen(() => undefined);
 listenOnce(() => undefined);
+stream(function* () {});
+const streamed = helpers.stream(async function* (event, value: string) {
+  const active: boolean = !event.signal.aborted;
+  event.sender.send("changed", value);
+  yield { value, active };
+});
+defineIpcModule("public", { streamed }, { validate: { streamed: () => undefined } });
+defineIpcModule("public", {
+  // @ts-expect-error a chunk must survive structured clone
+  bad: stream(async function* () {
+    yield () => 1;
+  }),
+});
+declare const chunks: IpcStream<string>;
+chunks.cancel();
+void chunks.next().then((result) => (result.done ? undefined : result.value.length));
 new IpcAuthorizationError("channel");
 new IpcValidationError("channel", [{ message: "invalid" }]);
 new IpcChannelCollisionError("channel", "one", "two");
@@ -171,9 +191,12 @@ type PublicTypes = [
   IpcEmitter<Events>,
   IpcHandler,
   IpcListener,
+  IpcStream<string>,
+  IpcStreamHandler,
   IpcUncloneable<string>,
   HandlerDef,
   ListenerDef,
+  StreamDef,
   CloneableChannel<ChannelDef, [id: string], string>,
   IpcModuleCleanup,
   IpcModuleRegister,
