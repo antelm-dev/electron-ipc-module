@@ -101,11 +101,61 @@ const exportReport = handle(async (event, jobId: string) => {
 `event.signal` aborts when the calling `WebContents` is destroyed. It is shared
 by all invocations from that sender and remains valid after a handler settles.
 It is cooperative: it does not interrupt work or settle the renderer's promise
-by itself. Check it before expensive steps and before emitting progress.
+by itself. Check it before expensive steps.
+
+The `send` above needs no guard of its own. `event.sender.send`,
+`event.senderFrame?.send`, and `event.reply` drop the event once the target is
+destroyed, so the window closing between the `aborted` check and the send costs
+nothing — it does not throw `Object has been destroyed` in main. The signal is
+there to stop the _work_, not to make the send safe.
 
 Reading the signal requires a runtime with a global `AbortController`, which
 Electron provides from version 15. Handlers that do not read it continue to
 work on the package's Electron 12 peer floor.
+
+## Wire the signal into the work, not just the loop
+
+Checking `aborted` between steps only cancels work the handler itself drives.
+A child process, a file lock, or an open socket outlives the window unless the
+signal reaches the thing holding it. `event.signal` is a real `AbortSignal`, so
+pass it down rather than polling it:
+
+```ts
+const transcode = handle(async (event, input: string) => {
+  // Node terminates the child when the WebContents is destroyed.
+  const child = spawn("ffmpeg", ["-i", input, "out.mp4"], { signal: event.signal });
+  return await onceExit(child);
+});
+```
+
+`fs/promises`, `fetch`, `stream.pipeline`, and `events.once` accept it the same
+way. When a Cancel button has to abort the same work, compose the two with
+`AbortSignal.any([event.signal, jobController.signal])` — Node 20.3 and newer,
+so Electron 29 upward — or use the two-channel pattern below on older runtimes.
+
+For a resource with no `signal` option, release it from an abort listener, and
+remove that listener when the operation ends:
+
+```ts
+const withLock = handle(async (event, path: string) => {
+  const lock = await acquireLock(path);
+  const onAbort = () => void lock.release();
+  event.signal.addEventListener("abort", onAbort);
+  try {
+    return await useLock(lock);
+  } finally {
+    event.signal.removeEventListener("abort", onAbort);
+    await lock.release();
+  }
+});
+```
+
+The `finally` matters more here than in most cleanup. The signal is shared by
+every invocation from that sender and lives as long as the window, so a
+listener registered per call and never removed accumulates for the window's
+lifetime, and each closure keeps what it captures — the lock, the child process
+handle — reachable until the window closes. APIs that take a `signal` option
+manage their own listener; hand-registered ones are yours to remove.
 
 ## Let a live renderer cancel explicitly
 

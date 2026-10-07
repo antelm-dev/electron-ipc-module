@@ -333,9 +333,10 @@ describe("defineIpcModule", () => {
       },
     )(ipc as never);
 
-    const event = createInvokeEvent();
-    await expect(handlers.get("secure:double")?.(event, "21")).resolves.toBe(42);
-    expect(handler).toHaveBeenCalledWith(event, 21);
+    // Asserted on the argument rather than the whole call: the handler sees a
+    // proxied event, so the raw one is not deep-equal to what it received.
+    await expect(handlers.get("secure:double")?.(createInvokeEvent(), "21")).resolves.toBe(42);
+    expect(handler.mock.lastCall?.[1]).toBe(21);
   });
 
   it("treats a callable schema as a schema, not as a callback validator", async () => {
@@ -372,7 +373,7 @@ describe("defineIpcModule", () => {
     // The schema's own API runs, and its parsed output reaches the handler.
     await expect(call?.(event, "  ada  ")).resolves.toBe("hi ada");
     expect(callableSchema["~standard"].validate).toHaveBeenCalledWith(["  ada  "]);
-    expect(handler).toHaveBeenCalledWith(event, "ada");
+    expect(handler.mock.lastCall?.[1]).toBe("ada");
 
     // Invalid input is rejected rather than silently passed through.
     await expect(call?.(event, 42)).rejects.toBeInstanceOf(IpcValidationError);
@@ -729,6 +730,114 @@ describe("defineIpcModule invoke lifecycle signals", () => {
 
     await handlers.get("jobs:run")?.(createInvokeEvent());
     expect(signal).toBeInstanceOf(AbortSignal);
+  });
+});
+
+describe("destroyed sender", () => {
+  it.each([undefined, true as const])(
+    "drops event.sender.send after the window closes mid-invoke, eventPrefix %j",
+    async (eventPrefix) => {
+      const { handlers, ipc } = createIpc();
+      const sender = createInvokeSender();
+      let release: (() => void) | undefined;
+
+      await defineIpcModule(
+        "jobs",
+        {
+          run: handle(async (event) => {
+            await new Promise<void>((resolve) => (release = resolve));
+            // The window is gone by now; this must no-op instead of throwing.
+            event.sender.send("done" as never);
+            return "ok";
+          }),
+        },
+        { eventPrefix },
+      )(ipc as never);
+
+      const pending = handlers.get("jobs:run")?.(createInvokeEvent(sender));
+      sender.destroy();
+      release?.();
+
+      await expect(pending).resolves.toBe("ok");
+      expect(sender.send).not.toHaveBeenCalled();
+    },
+  );
+
+  it("drops event.reply from a listener whose sender is gone", async () => {
+    const { listeners, ipc } = createIpc();
+    const sender = createInvokeSender();
+    const reply = vi.fn();
+
+    await defineIpcModule("jobs", {
+      notify: listen((event) => {
+        sender.destroy();
+        event.reply("noted" as never);
+      }),
+    })(ipc as never);
+
+    listeners.get("jobs:notify")?.({ reply, sender, senderFrame: null });
+
+    expect(reply).not.toHaveBeenCalled();
+  });
+
+  it("drops senderFrame.send once the frame is destroyed", async () => {
+    const { handlers, ipc } = createIpc();
+    const senderFrame = { send: vi.fn(), isDestroyed: vi.fn(() => true) };
+
+    await defineIpcModule("jobs", {
+      run: handle((event) => void event.senderFrame?.send("done" as never)),
+    })(ipc as never);
+
+    await handlers.get("jobs:run")?.({ sender: createInvokeSender(), senderFrame });
+
+    expect(senderFrame.send).not.toHaveBeenCalled();
+  });
+
+  it("still sends while the sender is alive", async () => {
+    const { handlers, ipc } = createIpc();
+    const sender = createInvokeSender();
+
+    await defineIpcModule("jobs", {
+      run: handle((event) => void event.sender.send("done" as never, 1 as never)),
+    })(ipc as never);
+
+    await handlers.get("jobs:run")?.(createInvokeEvent(sender));
+
+    expect(sender.send).toHaveBeenCalledWith("done", 1);
+  });
+
+  it("keeps event.sender identity stable so a WeakSet can track windows", async () => {
+    const { handlers, ipc } = createIpc();
+    const sender = createInvokeSender();
+    const seen = new WeakSet<object>();
+    const results: boolean[] = [];
+
+    await defineIpcModule("jobs", {
+      run: handle((event) => {
+        results.push(seen.has(event.sender));
+        seen.add(event.sender);
+      }),
+    })(ipc as never);
+
+    await handlers.get("jobs:run")?.(createInvokeEvent(sender));
+    await handlers.get("jobs:run")?.(createInvokeEvent(sender));
+
+    expect(results).toEqual([false, true]);
+  });
+
+  it("treats a send target without isDestroyed as live", async () => {
+    const { handlers, ipc } = createIpc();
+    // WebFrameMain predates the peer floor's `isDestroyed`; the guard must not
+    // be the thing that throws.
+    const sender = { send: vi.fn() };
+
+    await defineIpcModule("jobs", {
+      run: handle((event) => void event.sender.send("done" as never)),
+    })(ipc as never);
+
+    await handlers.get("jobs:run")?.({ sender, senderFrame: null });
+
+    expect(sender.send).toHaveBeenCalledWith("done");
   });
 });
 

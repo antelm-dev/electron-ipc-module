@@ -162,6 +162,11 @@ For `createIpcEmitter().emitTo`, provide a target with `send` and
 `isDestroyed`. For broadcasts, mock `BrowserWindow.getAllWindows()` and assert
 that live windows receive the event while destroyed ones do not.
 
+`isDestroyed` matters on the handler's sender too: flip it to `true` to prove a
+window closing mid-invoke drops the emit instead of throwing. Note that
+callbacks receive a proxied event, so assert on `sender.send` and on individual
+arguments rather than deep-equality against the fake event object.
+
 Also test renderer listener cleanup at the component boundary. Every generated
 `on<Event>` and `once<Event>` method returns an unsubscribe function; the test
 should call it on unmount rather than relying on a later navigation to discard
