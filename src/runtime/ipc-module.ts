@@ -544,6 +544,10 @@ function registerStream(
             break;
           }
           send("chunk", result.value);
+          // A ready chunk only advances microtasks; yield a macrotask so a
+          // queued cancel or `destroyed` event can stop a fast or endless stream.
+          await new Promise((resolve) => setImmediate(resolve));
+          if (stopped) break;
         }
       } catch (error) {
         // Electron surfaces a failed invoke as the error's string form; match it.

@@ -1092,7 +1092,11 @@ describe("defineIpcEvents", () => {
 
 describe("defineIpcModule stream channels", () => {
   /** Let a stream's pump run until it has nothing left to do. */
-  const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+  // The pump yields one `setImmediate` per chunk, so drain enough turns for any
+  // stream these tests run rather than racing a single timer.
+  const flush = async () => {
+    for (let turn = 0; turn < 20; turn += 1) await new Promise((resolve) => setImmediate(resolve));
+  };
 
   const setup = async (
     channels: Parameters<typeof defineIpcModule>[1],
@@ -1152,6 +1156,30 @@ describe("defineIpcModule stream channels", () => {
     await flush();
 
     expect(messages("a")).toEqual([["chunk", "in-1"], ["chunk", "in-2"], ["end"]]);
+  });
+
+  it("lets a cancel interrupt an endless synchronous iterable", async () => {
+    const finalized = vi.fn();
+    const { start, cancel, messages } = await setup({
+      run: stream(function* () {
+        try {
+          for (let index = 0; ; index += 1) yield index;
+        } finally {
+          finalized();
+        }
+      }),
+    });
+
+    await start("a");
+    setImmediate(() => cancel("a"));
+    await flush();
+    await flush();
+
+    const sent = messages("a");
+    expect(sent.length).toBeGreaterThan(0);
+    expect(sent.length).toBeLessThan(10);
+    expect(sent[sent.length - 1][0]).toBe("chunk");
+    expect(finalized).toHaveBeenCalledOnce();
   });
 
   it("streams a synchronous iterable", async () => {

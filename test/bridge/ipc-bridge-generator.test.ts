@@ -267,7 +267,11 @@ describe("generateBridge", () => {
  * disagreeing about a derived channel name.
  */
 describe("generated createStreamHelper", () => {
-  const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+  // The pump yields one `setImmediate` per chunk, so drain enough turns for any
+  // stream these tests run rather than racing a single timer.
+  const flush = async () => {
+    for (let turn = 0; turn < 20; turn += 1) await new Promise((resolve) => setImmediate(resolve));
+  };
 
   const wire = async (
     channels: Parameters<typeof defineIpcModule>[1],
@@ -387,6 +391,43 @@ describe("generated createStreamHelper", () => {
 
     await expect(pending).resolves.toEqual({ done: true, value: undefined });
     expect(listenerCount()).toBe(0);
+  });
+
+  it("settles every concurrent next() in order", async () => {
+    const { run } = await wire({
+      run: stream(async function* () {
+        yield "a";
+        await flush();
+        yield "b";
+      }),
+    });
+
+    const chunks = run("in");
+    const reads = await Promise.all([chunks.next(), chunks.next(), chunks.next()]);
+
+    expect(reads).toEqual([
+      { done: false, value: "a" },
+      { done: false, value: "b" },
+      { done: true, value: undefined },
+    ]);
+  });
+
+  it("drops buffered chunks on cancel() after main has already finished", async () => {
+    const { run, ipcRenderer } = await wire({
+      run: stream(function* () {
+        yield "1";
+        yield "2";
+        yield "3";
+      }),
+    });
+
+    const chunks = run("in");
+    await flush();
+    await flush();
+    chunks.cancel();
+
+    expect(await chunks.next()).toEqual({ done: true, value: undefined });
+    expect(ipcRenderer.send).not.toHaveBeenCalledWith("export:run:cancel", expect.anything());
   });
 
   it("rejects with the invoke error shape for generator and guard failures", async () => {
