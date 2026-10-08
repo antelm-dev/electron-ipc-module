@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.0](https://github.com/antelm-dev/electron-ipc-module/compare/v1.1.1...v1.2.0) (2026-10-07)
+
+
+### Features
+
+* add stream channel kind with renderer cancellation ([#89](https://github.com/antelm-dev/electron-ipc-module/issues/89)) ([7251e5a](https://github.com/antelm-dev/electron-ipc-module/commit/7251e5a41cd1955b34cbf5b36724c5e969f4f7b9))
+
 ## [1.1.1](https://github.com/antelm-dev/electron-ipc-module/compare/v1.1.0...v1.1.1) (2026-10-07)
 
 
