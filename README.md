@@ -4,17 +4,62 @@
 [![CI](https://github.com/antelm-dev/electron-ipc-module/actions/workflows/ci.yml/badge.svg)](https://github.com/antelm-dev/electron-ipc-module/actions/workflows/ci.yml)
 [![License](https://img.shields.io/npm/l/electron-ipc-module)](LICENSE)
 
-Modular, type-safe IPC for Electron. Declare handlers in the main process, load them with lifecycle management, and auto-generate a typed preload bridge for the renderer.
+Your main-process handlers are the schema. Declare a channel once with its real TypeScript types, and a preload bridge is generated from it: no duplicated `.d.ts`, no router framework, and a renderer API that only exposes what you declared.
 
-## Features
+## Why
 
-- Compact API for `ipcMain.handle`, `handleOnce`, `on`, and `once`, with automatic channel prefixing (`profile:get`, `profile:save`, …)
-- Cancellable `stream` channels: yield from a generator in main, iterate in the renderer
-- Typed renderer events via `reply`, `sender.send`, and `senderFrame.send`
-- Container to load, unload, and observe multiple IPC modules, with channel-collision detection and transactional rollback
-- Rollup/Vite plugin that generates a typed `ipcRenderer` bridge from `*.ipc.ts` files
-- Generated types model the structured clone boundary, so an unserializable payload fails to compile where the channel is declared
-- Runtime authorization and payload-validation hooks, and a standalone generate/check/watch CLI
+Electron IPC makes you repeat every channel three times — in main, in the preload, and in a renderer type declaration — and nothing keeps the three in sync:
+
+```ts
+// main
+ipcMain.handle("profile:get", (_event, id: string) => profileService.get(id));
+// preload
+contextBridge.exposeInMainWorld("ipc", {
+  getProfile: (id: string) => ipcRenderer.invoke("profile:get", id),
+});
+// renderer
+declare global {
+  interface Window {
+    ipc: { getProfile(id: string): Promise<Profile> };
+  }
+}
+```
+
+With this package you write the handler once and the rest is generated from it:
+
+```ts
+// main/ipc/profile.ipc.ts
+export const registerProfileIpc = defineIpcModule("profile", {
+  get: handle((_event, id: string) => profileService.get(id)),
+  export: stream(async function* (event, id: string) {
+    for await (const chunk of exportProfile(id, event.signal)) yield chunk;
+  }),
+});
+
+// renderer — types come from the handler above, nothing to declare
+const profile = await window.ipc.profile.get("abc-123");
+const run = window.ipc.profile.export("abc-123");
+for await (const chunk of { [Symbol.asyncIterator]: () => run }) render(chunk); // `break` cancels in main
+```
+
+What you get on top of the generated bridge:
+
+- **Compile errors for payloads that cannot cross IPC.** The generated types model structured clone, so returning a class instance or a function fails where the channel is declared, not as `undefined is not a function` in the renderer. See [what survives the boundary](#what-survives-the-boundary).
+- **Cancellable streams.** Yield from an async generator in main; `break` or `cancel()` in the renderer runs its `finally`, and `event.signal` aborts when the window closes.
+- **An allowlist, not a passthrough.** The renderer gets `invoke`/`send` wrappers for declared channels only — there is no generic `ipcRenderer` exposure. Add `authorize` and Standard Schema `validate` hooks (Zod, Valibot, ArkType) at the boundary.
+- **Module lifecycle.** Load, unload, and observe modules with channel-collision detection and transactional rollback.
+- **Build integration.** A Rollup/Vite/electron-vite plugin and a `generate` / `check` / `watch` CLI; commit the bridge and let `check` fail CI when it is stale.
+
+### Why not …
+
+|                                                                                                            | Where types live              | Framework  | Streams with cancel | Structured-clone check |
+| ---------------------------------------------------------------------------------------------------------- | ----------------------------- | ---------- | ------------------- | ---------------------- |
+| **electron-ipc-module**                                                                                    | the handler, bridge generated | none       | yes                 | yes                    |
+| [electron-trpc](https://github.com/jsonnull/electron-trpc)                                                 | a tRPC router                 | tRPC + Zod | subscriptions       | no                     |
+| [@electron-toolkit/typed-ipc](https://github.com/alex8088/electron-toolkit/tree/master/packages/typed-ipc) | a hand-written `.d.ts`        | none       | no                  | no                     |
+| hand-rolled `invoke`/`handle` wrapper                                                                      | three places, by hand         | none       | no                  | no                     |
+
+Pick electron-trpc if you already think in tRPC routers. Pick typed-ipc if you want zero generation and are happy to keep a type file in sync by hand. This package is for the middle: real handler types as the single source, with a generation step you commit and verify.
 
 ## Installation
 
