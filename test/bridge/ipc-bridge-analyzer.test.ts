@@ -19,9 +19,12 @@ const analyzeFixtureModules = () => {
   return extractModules(program, FIXTURE_IPC_DIR);
 };
 
+// Building a program is seconds of compiler work, so the edge fixtures are
+// analyzed once and shared by every edge-case test.
+let edgeModules: ReturnType<typeof extractModules> | undefined;
 const analyzeEdgeModules = () => {
-  const program = createTsProgram(FIXTURE_TSCONFIG);
-  return extractModules(program, FIXTURE_EDGE_DIR);
+  edgeModules ??= extractModules(createTsProgram(FIXTURE_TSCONFIG), FIXTURE_EDGE_DIR);
+  return edgeModules;
 };
 
 const edgeModule = (name: string) => analyzeEdgeModules().find((module) => module.name === name);
@@ -169,6 +172,13 @@ describe("extractModules", () => {
 
   describe("edge cases", () => {
     it("B2: skips a defineIpcModule call with fewer than two arguments", () => {
+      const program = createTsProgram(FIXTURE_TSCONFIG);
+      const fixtureFile = join(FIXTURE_EDGE_DIR, "b2-too-few-args.ipc.ts");
+
+      // Guard: absence must come from the analyzer, not from a missing fixture.
+      expect(program.getSourceFiles().map((file) => file.fileName.replaceAll("\\", "/"))).toContain(
+        fixtureFile.replaceAll("\\", "/"),
+      );
       expect(edgeModule("b2-too-few-args")).toBeUndefined();
     });
 
@@ -200,10 +210,12 @@ describe("extractModules", () => {
 
     it("B7: resolves eventPrefix true, string literal, and non-literal values", () => {
       const prefixTrue = edgeModule("b7-event-prefix-true");
+      const prefixQuoted = edgeModule("b7-event-prefix-quoted");
       const prefixString = edgeModule("b7-event-prefix-string");
       const prefixDynamic = edgeModule("b7-event-prefix-dynamic");
 
       expect(prefixTrue?.eventPrefix).toBe("prefix-true");
+      expect(prefixQuoted?.eventPrefix).toBe("prefix-quoted");
       expect(prefixString?.eventPrefix).toBe("custom");
       expect(prefixDynamic?.eventPrefix).toBeUndefined();
       expect(prefixDynamic?.warnings).toEqual([

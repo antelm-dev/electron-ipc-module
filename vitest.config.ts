@@ -30,9 +30,10 @@ export default defineConfig({
         functions: 96,
         lines: 93,
         // A project-wide floor cannot protect any one file: a regression in
-        // the runtime hides inside an average that a weak file can drag down. The guard matrix here is the
-        // security-relevant path, so it holds its own floor, set well below
-        // today's ~96% so ordinary edits do not trip it.
+        // the runtime hides inside an average that a weak file can drag down.
+        // The guard matrix here is the security-relevant path, so it holds its
+        // own floor, set well below today's ~96% so ordinary edits do not
+        // trip it.
         "src/runtime/ipc-module.ts": {
           branches: 90,
           lines: 95,
