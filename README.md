@@ -4,17 +4,62 @@
 [![CI](https://github.com/antelm-dev/electron-ipc-module/actions/workflows/ci.yml/badge.svg)](https://github.com/antelm-dev/electron-ipc-module/actions/workflows/ci.yml)
 [![License](https://img.shields.io/npm/l/electron-ipc-module)](LICENSE)
 
-Modular, type-safe IPC for Electron. Declare handlers in the main process, load them with lifecycle management, and auto-generate a typed preload bridge for the renderer.
+Your main-process handlers are the schema. Declare a channel once with its real TypeScript types, and a preload bridge is generated from it: no duplicated `.d.ts`, no router framework, and a renderer API that only exposes what you declared.
 
-## Features
+## Why
 
-- Compact API for `ipcMain.handle`, `handleOnce`, `on`, and `once`, with automatic channel prefixing (`profile:get`, `profile:save`, …)
-- Cancellable `stream` channels: yield from a generator in main, iterate in the renderer
-- Typed renderer events via `reply`, `sender.send`, and `senderFrame.send`
-- Container to load, unload, and observe multiple IPC modules, with channel-collision detection and transactional rollback
-- Rollup/Vite plugin that generates a typed `ipcRenderer` bridge from `*.ipc.ts` files
-- Generated types model the structured clone boundary, so an unserializable payload fails to compile where the channel is declared
-- Runtime authorization and payload-validation hooks, and a standalone generate/check/watch CLI
+Electron IPC makes you repeat every channel three times — in main, in the preload, and in a renderer type declaration — and nothing keeps the three in sync:
+
+```ts
+// main
+ipcMain.handle("profile:get", (_event, id: string) => profileService.get(id));
+// preload
+contextBridge.exposeInMainWorld("ipc", {
+  getProfile: (id: string) => ipcRenderer.invoke("profile:get", id),
+});
+// renderer
+declare global {
+  interface Window {
+    ipc: { getProfile(id: string): Promise<Profile> };
+  }
+}
+```
+
+With this package you write the handler once and the rest is generated from it:
+
+```ts
+// main/ipc/profile.ipc.ts
+export const registerProfileIpc = defineIpcModule("profile", {
+  get: handle((_event, id: string) => profileService.get(id)),
+  export: stream(async function* (event, id: string) {
+    for await (const chunk of exportProfile(id, event.signal)) yield chunk;
+  }),
+});
+
+// renderer — types come from the handler above, nothing to declare
+const profile = await window.ipc.profile.get("abc-123");
+const run = window.ipc.profile.export("abc-123");
+for await (const chunk of { [Symbol.asyncIterator]: () => run }) render(chunk); // `break` cancels in main
+```
+
+What you get on top of the generated bridge:
+
+- **Compile errors for payloads that cannot cross IPC.** The generated types model structured clone, so returning a class instance or a function fails where the channel is declared, not as `undefined is not a function` in the renderer. See [what survives the boundary](#what-survives-the-boundary).
+- **Cancellable streams.** Yield from an async generator in main; `break` or `cancel()` in the renderer runs its `finally`, and `event.signal` aborts when the window closes.
+- **An allowlist, not a passthrough.** The renderer gets `invoke`/`send` wrappers for declared channels only — there is no generic `ipcRenderer` exposure. Add `authorize` and Standard Schema `validate` hooks (Zod, Valibot, ArkType) at the boundary.
+- **Module lifecycle.** Load, unload, and observe modules with channel-collision detection and transactional rollback.
+- **Build integration.** A Rollup/Vite/electron-vite plugin and a `generate` / `check` / `watch` CLI; commit the bridge and let `check` fail CI when it is stale.
+
+### Why not …
+
+|                                                                                                            | Where types live              | Framework  | Streams with cancel | Structured-clone check |
+| ---------------------------------------------------------------------------------------------------------- | ----------------------------- | ---------- | ------------------- | ---------------------- |
+| **electron-ipc-module**                                                                                    | the handler, bridge generated | none       | yes                 | yes                    |
+| [electron-trpc](https://github.com/jsonnull/electron-trpc)                                                 | a tRPC router                 | tRPC + Zod | subscriptions       | no                     |
+| [@electron-toolkit/typed-ipc](https://github.com/alex8088/electron-toolkit/tree/master/packages/typed-ipc) | a hand-written `.d.ts`        | none       | no                  | no                     |
+| hand-rolled `invoke`/`handle` wrapper                                                                      | three places, by hand         | none       | no                  | no                     |
+
+Pick electron-trpc if you already think in tRPC routers. Pick typed-ipc if you want zero generation and are happy to keep a type file in sync by hand. This package is for the middle: real handler types as the single source, with a generation step you commit and verify.
 
 ## Installation
 
@@ -25,7 +70,7 @@ npm install electron-ipc-module
 | Requirement | Range                                        |
 | ----------- | -------------------------------------------- |
 | Node.js     | `>=22.5.0`                                   |
-| Electron    | `>=12` peer; majors 41–43 build-tested in CI |
+| Electron    | `>=12` peer; majors 42–44 build-tested in CI |
 | TypeScript  | `>=5.0.0 <7` peer                            |
 | Modules     | ESM only                                     |
 
@@ -187,7 +232,7 @@ pnpm start
 
 The exported types, and why the generator's types live on a separate entry point, are documented in [compatibility and stability](./guides/compatibility.md#where-the-public-types-live).
 
-**Typed events.** Pass an event map to `createIpcHelpers<TEmit>()` to type `event.reply`, `event.sender.send`, and `event.senderFrame?.send` — in `stream` callbacks too. Emitted events are **not** prefixed by `defineIpcModule`.
+**Typed events.** Pass an event map to `createIpcHelpers<TEmit>()` to type `event.reply`, `event.sender.send`, and `event.senderFrame?.send` — in `stream` callbacks too. Emitted events are **not** prefixed unless the module sets `eventPrefix`.
 
 Alternatively, declare an event map with `defineIpcEvents<TEvents>()` and export it from the `*.ipc.ts` file. The bridge plugin reads the type argument to generate typed `on<Event>` / `once<Event>` listeners in the renderer — useful when a module emits events without wiring them through `createIpcHelpers`:
 
@@ -280,8 +325,6 @@ defineIpcModule("profile", channels, {
   },
 });
 ```
-
-Callback validators only inspect the original arguments: their return value is discarded. Standard Schema validators are different—their parsed output replaces the callback arguments, so coercion and field stripping carry through to the handler.
 
 For `handle` channels, rejected promises propagate back through `ipcRenderer.invoke`. For fire-and-forget `listen` channels, failures are caught and passed to `onListenerError` (or logged) so they never become unhandled rejections. The full per-stage behavior is in the [error contract](./guides/error-contract.md).
 
@@ -426,79 +469,9 @@ defineIpcModule("export", {
 });
 ```
 
-When the work has to stay a single `invoke` — one result at the end — use a second IPC channel for explicit user intent, such as a Cancel button, and send progress as typed events:
+`handle` callbacks receive `event.signal` too, with a narrower meaning: it is the lifetime of the calling `WebContents`, shared by every invocation from that sender, and it aborts only when the window is destroyed — not on a reload or in-place navigation, and not when the user presses Cancel. It is cooperative: aborting it does not terminate the handler or settle the renderer promise, so pass it to anything that takes a `signal` option (`execFile`, `fetch`, `fs/promises`, `stream.pipeline`) rather than polling it between steps, and remove any abort listener you add by hand when the call ends. Sending to a closed window is already safe on its own: `event.sender.send`, `event.senderFrame?.send`, and `event.reply` drop the event once the target is destroyed instead of throwing `Object has been destroyed`.
 
-```ts
-// main
-const cancelled = new Set<string>();
-
-defineIpcModule("export", {
-  start: handle(async (event, jobId: string) => {
-    for (const chunk of chunks) {
-      if (cancelled.has(jobId)) return { cancelled: true };
-      event.sender.send("export-progress", jobId, chunk.index / chunks.length);
-    }
-    return { cancelled: false };
-  }),
-  cancel: listen((_event, jobId: string) => {
-    cancelled.add(jobId);
-  }),
-});
-```
-
-Sending to a window that has closed is safe on its own: `event.sender.send`, `event.senderFrame?.send`, and `event.reply` all drop the event once the target is destroyed, rather than throwing `Object has been destroyed` in main. An invoke that outlives its caller settles normally.
-
-That keeps the process alive; it does not stop the work. `handle` callbacks also receive `event.signal`, which represents the lifetime of the `WebContents` that made the call. It starts active and aborts once that window (or other `WebContents`) is destroyed. Check it before expensive work so a closed window does not leave a job running:
-
-```ts
-defineIpcModule("export", {
-  start: handle(async (event, jobId: string) => {
-    for (const chunk of chunks) {
-      if (event.signal.aborted) return { cancelled: true };
-      const result = await renderChunk(chunk);
-      if (event.signal.aborted) return { cancelled: true };
-      event.sender.send("export-progress", jobId, result);
-    }
-    return { cancelled: false };
-  }),
-});
-```
-
-Polling `aborted` only cancels work the handler drives itself. A child process, a file lock, or an open socket keeps running after the window is gone unless the signal reaches it. It is a real `AbortSignal`, so pass it to anything that accepts one instead of checking it by hand:
-
-```ts
-defineIpcModule("export", {
-  start: handle(async (event, input: string) => {
-    // Node kills the child when the window closes.
-    const { stdout } = await execFile("ffmpeg", ["-i", input, "out.mp4"], {
-      signal: event.signal,
-    });
-    return stdout;
-  }),
-});
-```
-
-`fs/promises`, `fetch`, `stream.pipeline`, `events.once`, and most third-party clients take a `signal` option the same way.
-
-For a resource with no `signal` option, release it from an abort listener — and remove that listener when the operation finishes:
-
-```ts
-const release = handle(async (event, path: string) => {
-  const lock = await acquireLock(path);
-  const onAbort = () => void lock.release();
-  event.signal.addEventListener("abort", onAbort);
-  try {
-    return await useLock(lock);
-  } finally {
-    event.signal.removeEventListener("abort", onAbort);
-    await lock.release();
-  }
-});
-```
-
-The `finally` is not optional. One signal is shared by every invocation from a sender and lives as long as the window, so a listener added per call and never removed accumulates for the window's lifetime and keeps whatever its closure captures — the lock, the child process handle — reachable that whole time. Options that take a `signal` clean up after themselves; hand-registered listeners do not.
-
-The signal is cooperative: aborting it does not terminate the handler, select an error, or settle the renderer promise automatically. It tracks destruction of the `WebContents` and nothing else — a reload or an in-place navigation abandons the pending invocation without aborting, because the `WebContents` itself survives. One read-only signal is shared by every invocation from the same sender, and it stays valid after the handler settles. It is built the first time a handler reads it, so it needs a global `AbortController` — Electron 15 or newer; reading it on an older runtime throws, while handlers that never touch it keep working on the package's Electron 12 peer floor. Use a `stream`, or the two-channel pattern above, when cancellation must also work while the renderer is still alive.
+Reading the signal needs a global `AbortController`, Electron 15 or newer; handlers that never touch it keep working on the Electron 12 peer floor. When cancellation must also work while the renderer is still alive and the work has to stay a single `invoke`, add a second `listen` channel for the user's intent. Both patterns, with the child-process and lock examples, are in [multi-window and background-work patterns](./guides/multi-window-and-background-work.md#report-progress-from-long-running-work).
 
 ### Rollup plugin (`electron-ipc-module/rollup-plugin`)
 
@@ -514,7 +487,7 @@ Analyzes `*.ipc.ts` files and generates a typed bridge for the renderer.
 
 `logger` takes any `LoggerLike` — `Pick<Console, "debug" \| "info" \| "warn" \| "error" \| "log">`, exported from the root. Supply one to route generator output into a build tool's own reporter, to silence it in a watch loop, or to see the per-module `debug` detail the default logger drops. The default prints `info` and above; a supplied logger receives every level.
 
-**Exposing the bridge automatically**
+#### Exposing the bridge automatically
 
 Set `expose` to have the generator write [step 4](#4-expose-the-bridge-in-preload) and [step 5](#5-type-windowipc-in-the-renderer) for you:
 
@@ -533,7 +506,7 @@ The key has to be a new global identifier: `ipc` is fine, while `my-ipc`, `name`
 
 Leave `expose` unset to keep exposing the bridge yourself — useful when the preload wraps or filters it before handing it to the renderer.
 
-**Naming conventions**
+#### Naming conventions
 
 | Source                    | Generated API                                |
 | ------------------------- | -------------------------------------------- |
@@ -542,7 +515,7 @@ Leave `expose` unset to keep exposing the bridge yourself — useful when the pr
 | event `"profile-updated"` | `bridge.profile.onProfileUpdated(...)`       |
 | `stream` channel `"run"`  | `bridge.profile.run(...)`, an `IpcStream<T>` |
 
-**What gets type-checked**
+#### What gets type-checked
 
 The generator reads types from the compiler, so a broken type in an IPC source — or in anything it imports — could put a wrong signature in the bridge. Those errors abort generation, and nothing is written.
 
@@ -550,7 +523,7 @@ Errors anywhere else in the `tsconfig` project are ignored. They cannot reach th
 
 Configuration and compiler-option errors still abort, since those describe the project rather than any one file.
 
-**Static analysis tips**
+#### Static analysis tips
 
 - Use `*.ipc.ts` file names
 - **One `defineIpcModule` per file.** The bridge is grouped into one entry named after the file, so a second module in the same file has nowhere to go. Generation fails rather than emitting the first and dropping the rest, which would register both on `ipcMain` while the renderer only ever saw one.

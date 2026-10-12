@@ -41,7 +41,7 @@ jobs:
         # Latest of each supported line. `packed-consumer` runs at the exact
         # `engines` floor against the published artifact.
         node: [22, 24]
-        electron: [41, 42, 43]
+        electron: [42, 43, 44]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -153,10 +153,10 @@ jobs:
             electron: 12.2.3
             rollup: 4.17.2
           - typescript: 5.9.3
-            electron: 43.3.0
+            electron: 44.7.0
             rollup: 4.62.4
           - typescript: 6.0.3
-            electron: 43.3.0
+            electron: 44.7.0
             rollup: 4.62.4
     name: compatibility (TypeScript ${{ matrix.typescript }}, Electron ${{ matrix.electron }})
     runs-on: ubuntu-latest
