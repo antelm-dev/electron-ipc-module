@@ -70,7 +70,7 @@ npm install electron-ipc-module
 | Requirement | Range                                        |
 | ----------- | -------------------------------------------- |
 | Node.js     | `>=22.5.0`                                   |
-| Electron    | `>=12` peer; majors 41–43 build-tested in CI |
+| Electron    | `>=12` peer; majors 42–44 build-tested in CI |
 | TypeScript  | `>=5.0.0 <7` peer                            |
 | Modules     | ESM only                                     |
 
